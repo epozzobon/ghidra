@@ -26,6 +26,7 @@ import ghidra.app.util.viewer.util.AddressIndexMap;
 import ghidra.framework.options.AutoOptions;
 import ghidra.framework.options.AutoOptions.Wiring;
 import ghidra.framework.options.annotation.AutoOptionConsumed;
+import ghidra.framework.plugintool.Plugin;
 import ghidra.program.model.address.Address;
 import ghidra.program.util.ProgramLocation;
 
@@ -34,14 +35,13 @@ class CursorBackgroundColorModel implements ListingBackgroundColorModel {
 	private ListingPanel listingPanel;
 	private AddressIndexMap addressIndexMap;
 
-	@AutoOptionConsumed(category = {}, name = GhidraOptions.HIGHLIGHT_CURSOR_LINE_COLOR)
-	private Color cursorColor = GhidraOptions.DEFAULT_CURSOR_LINE_COLOR;
+	private Color cursorLineColor = GhidraOptions.DEFAULT_CURSOR_LINE_COLOR;
 	@AutoOptionConsumed(category = {}, name = GhidraOptions.HIGHLIGHT_CURSOR_LINE)
 	private boolean doHighlight = true;
 	@SuppressWarnings("unused")
 	private final Wiring autoOptionsWiring;
 
-	public CursorBackgroundColorModel(DebuggerListingPlugin plugin, ListingPanel listingPanel) {
+	public CursorBackgroundColorModel(Plugin plugin, ListingPanel listingPanel) {
 		autoOptionsWiring = AutoOptions.wireOptions(plugin, this);
 		modelDataChanged(listingPanel);
 	}
@@ -60,7 +60,7 @@ class CursorBackgroundColorModel implements ListingBackgroundColorModel {
 		if (!Objects.equals(cursorAddress, address)) {
 			return defaultBackgroundColor;
 		}
-		return cursorColor;
+		return cursorLineColor;
 	}
 
 	@Override

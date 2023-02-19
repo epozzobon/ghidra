@@ -18,14 +18,17 @@ package ghidra.app.plugin.core.debug.gui.objects;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.event.MouseEvent;
+import java.io.PrintWriter;
 import java.lang.invoke.MethodHandles;
 import java.util.*;
+import java.util.Map.Entry;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
-import javax.swing.*;
+import javax.swing.JComponent;
+import javax.swing.JPanel;
 import javax.swing.tree.TreePath;
 
 import org.apache.commons.collections4.map.LinkedMap;
@@ -36,47 +39,78 @@ import docking.WindowPosition;
 import docking.action.*;
 import docking.action.builder.ActionBuilder;
 import docking.action.builder.ToggleActionBuilder;
+import docking.widgets.OptionDialog;
 import docking.widgets.table.DefaultEnumeratedColumnTableModel;
 import docking.widgets.tree.GTree;
+import generic.jar.ResourceFile;
+import generic.theme.GColor;
 import ghidra.app.plugin.core.debug.DebuggerCoordinates;
 import ghidra.app.plugin.core.debug.DebuggerPluginPackage;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources.*;
 import ghidra.app.plugin.core.debug.gui.objects.actions.*;
 import ghidra.app.plugin.core.debug.gui.objects.components.*;
+import ghidra.app.plugin.core.debug.mapping.DebuggerMemoryMapper;
+import ghidra.app.script.*;
 import ghidra.app.services.*;
-import ghidra.async.AsyncUtils;
-import ghidra.async.TypeSpec;
+import ghidra.app.services.DebuggerTraceManagerService.ActivationCause;
+import ghidra.async.*;
 import ghidra.dbg.*;
 import ghidra.dbg.error.DebuggerMemoryAccessException;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.TargetConsole.Channel;
 import ghidra.dbg.target.TargetExecutionStateful.TargetExecutionState;
-import ghidra.dbg.target.TargetLauncher.TargetCmdLineLauncher;
+import ghidra.dbg.target.TargetMethod.ParameterDescription;
 import ghidra.dbg.target.TargetSteppable.TargetStepKind;
 import ghidra.dbg.util.DebuggerCallbackReorderer;
 import ghidra.dbg.util.PathUtils;
+import ghidra.framework.model.Project;
 import ghidra.framework.options.AutoOptions;
 import ghidra.framework.options.SaveState;
-import ghidra.framework.options.annotation.*;
+import ghidra.framework.options.annotation.AutoOptionDefined;
 import ghidra.framework.plugintool.*;
 import ghidra.framework.plugintool.annotation.AutoConfigStateField;
 import ghidra.framework.plugintool.annotation.AutoServiceConsumed;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.listing.Program;
+import ghidra.program.util.ProgramLocation;
+import ghidra.program.util.ProgramSelection;
 import ghidra.trace.model.Trace;
 import ghidra.trace.model.thread.TraceThread;
 import ghidra.util.*;
 import ghidra.util.datastruct.PrivatelyQueuedListener;
 import ghidra.util.table.GhidraTable;
-import resources.ResourceManager;
+import ghidra.util.task.TaskMonitor;
 
 public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		implements ObjectContainerListener {
 
 	public static final String PATH_JOIN_CHAR = ".";
 	//private static final String AUTOUPDATE_ATTRIBUTE_NAME = "autoupdate";
+
+	public static final Color COLOR_FOREGROUND =
+		new GColor("color.fg.debugger.plugin.objects.default");
+	public static final Color COLOR_BACKGROUND =
+		new GColor("color.bg.debugger.plugin.objects.default");
+	public static final Color COLOR_FOREGROUND_INVISIBLE =
+		new GColor("color.fg.debugger.plugin.objects.invisible");
+	public static final Color COLOR_FOREGROUND_INVALIDATED =
+		new GColor("color.fg.debugger.plugin.objects.invalidated");
+	public static final Color COLOR_FOREGROUND_MODIFIED =
+		new GColor("color.fg.debugger.plugin.objects.modified");
+	public static final Color COLOR_FOREGROUND_SUBSCRIBED =
+		new GColor("color.fg.debugger.plugin.objects.subscribed");
+	public static final Color COLOR_FOREGROUND_ERROR =
+		new GColor("color.fg.debugger.plugin.objects.error");
+	public static final Color COLOR_FOREGROUND_INTRINSIC =
+		new GColor("color.fg.debugger.plugin.objects.intrinsic");
+	public static final Color COLOR_FOREGROUND_TARGET =
+		new GColor("color.fg.debugger.plugin.objects.target");
+	public static final Color COLOR_FOREGROUND_ACCESSOR =
+		new GColor("color.fg.debugger.plugin.objects.accessor");
+	public static final Color COLOR_FOREGROUND_LINK =
+		new GColor("color.fg.debugger.plugin.objects.link");
 
 	private static final AutoConfigState.ClassHandler<DebuggerObjectsProvider> CONFIG_STATE_HANDLER =
 		AutoConfigState.wireHandler(DebuggerObjectsProvider.class, MethodHandles.lookup());
@@ -98,97 +132,8 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	@SuppressWarnings("unused")
 	private final AutoService.Wiring autoServiceWiring;
 
-	public static final String OPTION_NAME_DEFAULT_FOREGROUND_COLOR = "Object Colors.Default";
-	public static final String OPTION_NAME_MODIFIED_FOREGROUND_COLOR = "Object Colors.Modifed";
-	public static final String OPTION_NAME_SUBSCRIBED_FOREGROUND_COLOR = "Object Colors.Subscribed";
-	public static final String OPTION_NAME_INVISIBLE_FOREGROUND_COLOR =
-		"Object Colors.Invisible (when toggled on)";
-	public static final String OPTION_NAME_INVALIDATED_FOREGROUND_COLOR =
-		"Object Colors.Invalidated";
-	public static final String OPTION_NAME_ERROR_FOREGROUND_COLOR = "Object Colors.Errors";
-	public static final String OPTION_NAME_INTRINSIC_FOREGROUND_COLOR = "Object Colors.Intrinsics";
-	public static final String OPTION_NAME_TARGET_FOREGROUND_COLOR = "Object Colors.Targets";
-	public static final String OPTION_NAME_ACCESSOR_FOREGROUND_COLOR = "Object Colors.Accessors";
-	public static final String OPTION_NAME_LINK_FOREGROUND_COLOR = "Object Colors.Links";
-	public static final String OPTION_NAME_DEFAULT_BACKGROUND_COLOR = "Object Colors.Background";
-
-	@AutoOptionDefined( //
-		name = OPTION_NAME_DEFAULT_FOREGROUND_COLOR, //
-		description = "The default foreground color of items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color defaultForegroundColor = Color.BLACK;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_DEFAULT_BACKGROUND_COLOR, //
-		description = "The default background color of items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color defaultBackgroundColor = Color.WHITE;
-
-	@AutoOptionDefined( //
-		name = OPTION_NAME_INVISIBLE_FOREGROUND_COLOR, //
-		description = "The foreground color for items normally not visible (toggleable)", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color invisibleForegroundColor = Color.LIGHT_GRAY;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_INVALIDATED_FOREGROUND_COLOR, //
-		description = "The foreground color for items no longer valid", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color invalidatedForegroundColor = Color.LIGHT_GRAY;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_MODIFIED_FOREGROUND_COLOR, //
-		description = "The foreground color for modified items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color modifiedForegroundColor = Color.RED;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_SUBSCRIBED_FOREGROUND_COLOR, //
-		description = "The foreground color for subscribed items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color subscribedForegroundColor = Color.BLACK;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_ERROR_FOREGROUND_COLOR, //
-		description = "The foreground color for items in error", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color errorForegroundColor = Color.RED;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_INTRINSIC_FOREGROUND_COLOR, //
-		description = "The foreground color for intrinsic items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color intrinsicForegroundColor = Color.BLUE;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_TARGET_FOREGROUND_COLOR, //
-		description = "The foreground color for target object items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color targetForegroundColor = Color.MAGENTA;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_ACCESSOR_FOREGROUND_COLOR, //
-		description = "The foreground color for property accessor items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color accessorForegroundColor = Color.LIGHT_GRAY;
-	@AutoOptionDefined( //
-		name = OPTION_NAME_LINK_FOREGROUND_COLOR, //
-		description = "The foreground color for links to items in the objects tree", //
-		help = @HelpInfo(anchor = "colors") //
-	)
-	Color linkForegroundColor = Color.GREEN.darker();
-
-	@AutoOptionDefined( //
-		name = "Default Extended Step", //
-		description = "The default string for the extended step command" //
-	//help = @HelpInfo(anchor = "colors") //
-	)
+	@AutoOptionDefined(name = "Default Extended Step", description = "The default string for the extended step command")
 	String extendedStep = "";
-
-	private static final Icon ENABLED_ICON = ResourceManager.loadImage("images/enabled.png");
-	private static final Icon DISABLED_ICON = ResourceManager.loadImage("images/disabled.png");
 
 	@SuppressWarnings("unused")
 	private final AutoOptions.Wiring autoOptionsWiring;
@@ -203,6 +148,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	protected Map<Long, Trace> traces = new HashMap<>();
 	protected Trace currentTrace;
 	protected DebuggerObjectModel currentModel;
+	private TargetObject targetFocus;
 	// NB: We're getting rid of this because the ObjectsProvider is beating the trace
 	//  to the punch and causing the pattern-matcher to fail
 	// private TraceRecorder recorder;  
@@ -212,9 +158,11 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	private boolean asTree = true;
 	private MyObjectListener listener = new MyObjectListener();
 
-	public DebuggerMethodInvocationDialog launchDialog;
+	public DebuggerMethodInvocationDialog configDialog;
+	public DebuggerMethodInvocationDialog methodDialog;
 	public DebuggerAttachDialog attachDialog;
 	public DebuggerBreakpointDialog breakpointDialog;
+	private GenericDebuggerProgramLaunchOffer launchOffer;
 
 	DockingAction actionLaunch;
 	DockingAction actionAddBreakpoint;
@@ -232,6 +180,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	ImportFromXMLAction importFromXMLAction;
 	ImportFromFactsAction importFromFactsAction;
 	OpenWinDbgTraceAction openTraceAction;
+	SetTimeoutAction setTimeoutAction;
 
 	private ToggleDockingAction actionToggleBase;
 	private ToggleDockingAction actionToggleSubscribe;
@@ -239,6 +188,8 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	private ToggleDockingAction actionToggleHideIntrinsics;
 	private ToggleDockingAction actionToggleSelectionOnly;
 	private ToggleDockingAction actionToggleIgnoreState;
+	private ToggleDockingAction actionToggleUpdateWhileRunning;
+	private ToggleDockingAction actionSuppressDescent;
 
 	@AutoConfigStateField
 	private boolean autoRecord = true;
@@ -248,8 +199,17 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	private boolean selectionOnly = false;
 	@AutoConfigStateField
 	private boolean ignoreState = false;
+	@AutoConfigStateField
+	private boolean updateWhileRunning = true;
+	@AutoConfigStateField
+	private boolean suppressDescent = false;
+	@AutoConfigStateField
+	private int nodeTimeout = 60;
 
 	Set<TargetConfigurable> configurables = new HashSet<>();
+	private String lastMethod = "";
+	Map<String, GhidraScript> scripts = new HashMap<>();
+	Map<String, String> scriptNames = new HashMap<>();
 
 	public DebuggerObjectsProvider(final DebuggerObjectsPlugin plugin, DebuggerObjectModel model,
 			ObjectContainer container, boolean asTree) throws Exception {
@@ -258,11 +218,12 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		currentProgram = plugin.getActiveProgram();
 		plugin.addProvider(this);
 		this.currentModel = model;
+		launchOffer = new GenericDebuggerProgramLaunchOffer(currentProgram, tool, currentModel);
 		this.root = container;
 		this.asTree = asTree;
 		setIcon(asTree ? ObjectTree.ICON_TREE : ObjectTable.ICON_TABLE);
 
-		targetMap = new LinkedMap<String, ObjectContainer>();
+		targetMap = new LinkedMap<>();
 		refSet = new HashSet<>();
 		getRoot().propagateProvider(this);
 
@@ -283,6 +244,16 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		createActions();
 
 		repeatLastSet.run();
+	}
+
+	void dispose() {
+		// TODO This is not currently called, since the clients of this provider to not hold onto
+		// the provider after creation.  Ideally, these providers should either be tracked and 
+		// disposed, or this provider should perform cleanup on itself when it is no longer used.
+		configDialog.dispose();
+		methodDialog.dispose();
+		attachDialog.dispose();
+		breakpointDialog.dispose();
 	}
 
 	@Override
@@ -314,6 +285,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	public void setModel(DebuggerObjectModel model) {
 		currentModel = model;
 		currentModel.addModelListener(getListener(), true);
+		launchOffer = new GenericDebuggerProgramLaunchOffer(currentProgram, tool, currentModel);
 		refresh();
 	}
 
@@ -331,11 +303,13 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			addTable(getRoot());
 		}
 
-		launchDialog = new DebuggerMethodInvocationDialog(tool, "Launch", "Launch",
+		methodDialog = new DebuggerMethodInvocationDialog(tool, "Method", "Method",
 			DebuggerResources.ICON_LAUNCH);
 		//attachDialogOld = new DebuggerAttachDialog(this);
 		attachDialog = new DebuggerAttachDialog(this);
 		breakpointDialog = new DebuggerBreakpointDialog(this);
+		configDialog = new DebuggerMethodInvocationDialog(tool, "Configuration", "Configure",
+			DebuggerResources.ICON_CONFIG);
 	}
 
 	private void addToPanel(ObjectPane p) throws Exception {
@@ -350,100 +324,13 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		return pane == null ? null : pane.getPrincipalComponent();
 	}
 
-	@AutoOptionConsumed(name = OPTION_NAME_DEFAULT_BACKGROUND_COLOR)
-	private void setDefaultBackgroundColor(Color color) {
-		defaultBackgroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_DEFAULT_FOREGROUND_COLOR)
-	private void setDefaultForegroundColor(Color color) {
-		defaultForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_ACCESSOR_FOREGROUND_COLOR)
-	private void setAccessorForegroundColor(Color color) {
-		accessorForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_ERROR_FOREGROUND_COLOR)
-	private void setErrorForegroundColor(Color color) {
-		errorForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_INTRINSIC_FOREGROUND_COLOR)
-	private void setIntrinsicForegroundColor(Color color) {
-		intrinsicForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_INVISIBLE_FOREGROUND_COLOR)
-	private void setInvisibleForegroundColor(Color color) {
-		invisibleForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_INVALIDATED_FOREGROUND_COLOR)
-	private void setInvalidatedForegroundColor(Color color) {
-		invalidatedForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_LINK_FOREGROUND_COLOR)
-	private void setLinkForegroundColor(Color color) {
-		linkForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_MODIFIED_FOREGROUND_COLOR)
-	private void setModifiedForegroundColor(Color color) {
-		modifiedForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_SUBSCRIBED_FOREGROUND_COLOR)
-	private void setSubscribedForegroundColor(Color color) {
-		subscribedForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
-	@AutoOptionConsumed(name = OPTION_NAME_TARGET_FOREGROUND_COLOR)
-	private void setTargetForegroundColor(Color color) {
-		targetForegroundColor = color;
-		if (pane != null) {
-			pane.getComponent().repaint();
-		}
-	}
-
 	public void setProgram(Program program) {
 		if (program == currentProgram) {
 			return;
 		}
 		currentProgram = program;
 		plugin.setActiveProgram(currentProgram);
+		launchOffer = new GenericDebuggerProgramLaunchOffer(currentProgram, tool, currentModel);
 		contextChanged();
 	}
 
@@ -460,7 +347,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		if (pane != null) {
 			if (currentModel != null) {
 				currentModel.fetchModelRoot().thenAccept(this::refresh).exceptionally(ex -> {
-					Msg.error(this, "Error refreshing model root", ex);
+					plugin.objectError("Error refreshing model root");
 					return null;
 				});
 			}
@@ -625,7 +512,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		TargetObject targetObject = container.getTargetObject();
 		String name = targetObject.getName();
 		DefaultEnumeratedColumnTableModel<?, ObjectAttributeRow> model =
-			new DefaultEnumeratedColumnTableModel<>(name, ObjectAttributeColumn.class);
+			new DefaultEnumeratedColumnTableModel<>(tool, name, ObjectAttributeColumn.class);
 		Map<String, Object> map = container.getAttributeMap();
 		List<ObjectAttributeRow> list = new ArrayList<>();
 		for (Object val : map.values()) {
@@ -635,7 +522,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			}
 		}
 		model.addAll(list);
-		return new ObjectTable<ObjectAttributeRow>(container, ObjectAttributeRow.class, model);
+		return new ObjectTable<>(container, ObjectAttributeRow.class, model);
 	}
 
 	private ObjectTable<ObjectElementRow> buildTableFromElements(ObjectContainer container) {
@@ -655,7 +542,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			new ObjectEnumeratedColumnTableModel<>(name, cols);
 		model.addAll(list);
 		ObjectTable<ObjectElementRow> table =
-			new ObjectTable<ObjectElementRow>(container, ObjectElementRow.class, model);
+			new ObjectTable<>(container, ObjectElementRow.class, model);
 		for (Object obj : map.values()) {
 			if (obj instanceof TargetObject) {
 				TargetObject ref = (TargetObject) obj;
@@ -663,7 +550,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 					table.setColumns();
 					// TODO: What with attrs?
 				}).exceptionally(ex -> {
-					Msg.error(this, "Failed to fetch attributes", ex);
+					plugin.objectError("Failed to fetch attributes");
 					return null;
 				});
 			}
@@ -678,7 +565,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	public void addTargetToMap(ObjectContainer container) {
 		DebuggerObjectsProvider provider = container.getProvider();
 		if (!this.equals(provider)) {
-			Msg.error(this, "TargetMap corrupted");
+			plugin.objectError("TargetMap corrupted");
 		}
 		TargetObject targetObject = container.getTargetObject();
 		if (targetObject != null && !container.isLink()) {
@@ -687,17 +574,14 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			synchronized (targetMap) {
 				targetMap.put(key, container);
 				refSet.add(targetObject);
+				if (targetObject instanceof TargetConfigurable) {
+					configurables.add((TargetConfigurable) targetObject);
+				}
 			}
 			if (targetObject instanceof TargetInterpreter) {
 				TargetInterpreter interpreter = (TargetInterpreter) targetObject;
 				getPlugin().showConsole(interpreter);
-				DebugModelConventions.findSuitable(TargetFocusScope.class, targetObject)
-						.thenAccept(f -> {
-							setFocus(f, targetObject);
-						});
-			}
-			if (targetObject instanceof TargetConfigurable) {
-				configurables.add((TargetConfigurable) targetObject);
+				pane.setSelectedObject(targetObject);
 			}
 		}
 	}
@@ -716,12 +600,12 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	}
 
 	public ObjectContainer getContainerByPath(List<String> path) {
-		return targetMap.get(PathUtils.toString(path));
+		return targetMap.get(PathUtils.toString(path, PATH_JOIN_CHAR));
 	}
 
 	static List<ObjectContainer> getContainersFromObjects(Map<String, ?> objectMap,
 			TargetObject parent, boolean usingAttributes) {
-		List<ObjectContainer> result = new ArrayList<ObjectContainer>();
+		List<ObjectContainer> result = new ArrayList<>();
 		if (parent == null || parent instanceof DummyTargetObject) {
 			return result;
 		}
@@ -771,9 +655,9 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 
 	@Override
 	public void closeComponent() {
-		TargetObject targetObject = getRoot().getTargetObject();
-		if (targetObject != null) {
-			targetObject.removeListener(getListener());
+		DebuggerObjectModel model = getModel();
+		if (model != null) {
+			model.removeModelListener(getListener());
 		}
 		super.closeComponent();
 	}
@@ -803,7 +687,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 
 	public ObjectContainer getParent(ObjectContainer container) {
 		List<String> path = container.getTargetObject().getPath();
-		List<String> ppath = new ArrayList<String>();
+		List<String> ppath = new ArrayList<>();
 		for (String link : path) {
 			ppath.add(link);
 		}
@@ -835,6 +719,14 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 
 	}
 
+	public boolean isRoot(ActionContext context) {
+		TargetObject object = this.getObjectFromContext(context);
+		if (object == null) {
+			return false;
+		}
+		return object.isRoot();
+	}
+
 	public boolean isInstance(ActionContext context, Class<? extends TargetObject> clazz) {
 		TargetObject object = this.getObjectFromContext(context);
 		if (object == null) {
@@ -852,6 +744,22 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			// IGNORE
 		}
 		return result != null;
+	}
+
+	public boolean hasInstance(ActionContext context, Class<? extends TargetObject> clazz) {
+		TargetObject object = this.getObjectFromContext(context);
+		if (object == null) {
+			return false;
+		}
+		if (isLocalOnly()) {
+			return clazz.isInstance(object);
+		}
+		for (Object attr : object.getCachedAttributes().values()) {
+			if (clazz.isInstance(attr)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public TargetObject getAncestor(ActionContext context, Class<? extends TargetObject> clazz) {
@@ -944,9 +852,33 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			.menuGroup(DebuggerResources.GROUP_TARGET, "M" + groupTargetIndex)
 			.helpLocation(new HelpLocation(plugin.getName(), "toggle_ignore_state"))
 			.onAction(ctx -> performToggleIgnoreState(ctx))
-			.selected(selectionOnly)
+			.selected(ignoreState)
 			.enabled(true)
 			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
+
+		actionToggleUpdateWhileRunning = new ToggleActionBuilder("Toggle update while running", plugin.getName())
+			.menuPath("Maintenance","&Update While Running")
+			.menuGroup(DebuggerResources.GROUP_TARGET, "M" + groupTargetIndex)
+			.helpLocation(new HelpLocation(plugin.getName(), "toggle_update_while_running"))
+			.onAction(ctx -> performToggleUpdateWhileRunning(ctx))
+			.selected(isUpdateWhileRunning())
+			.enabled(true)
+			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
+		
+		/*
+		actionSuppressDescent = new ToggleActionBuilder("Automatically populate containers", plugin.getName())
+			.menuPath("Maintenance","&Auto-populate")
+			.menuGroup(DebuggerResources.GROUP_TARGET, "M" + groupTargetIndex)
+			.helpLocation(new HelpLocation(plugin.getName(), "auto-populate containers"))
+			.onAction(ctx -> performToggleAutoPopulateContainers(ctx))
+			.selected(isUpdateWhileRunning())
+			.enabled(true)
+			.buildAndInstallLocal(this);
+		*/
 		
 		groupTargetIndex = 0;
 
@@ -1005,6 +937,22 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			.buildAndInstallLocal(this);
 		
 		groupTargetIndex++;
+	
+		new ActionBuilder("Method", plugin.getName())
+			.keyBinding("M")
+			.menuPath("Exec &Method")
+			.menuGroup(DebuggerResources.GROUP_TARGET, "T" + groupTargetIndex)
+			.menuIcon(AbstractDetachAction.ICON)
+			.popupMenuPath("Exec &Method")
+			.popupMenuGroup(DebuggerResources.GROUP_TARGET, "T" + groupTargetIndex)
+			.popupMenuIcon(AbstractDetachAction.ICON)
+			.helpLocation(AbstractAttachAction.help(plugin))
+			.enabledWhen(ctx -> hasInstance(ctx, TargetMethod.class))
+			.onAction(ctx -> performMethod(ctx))
+			.enabled(true)
+			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
 
 		/*
 		new ActionBuilder("AttachAction", plugin.getName())
@@ -1049,8 +997,8 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			.popupMenuGroup(DebuggerResources.GROUP_TARGET, "T" + groupTargetIndex)
 			.popupMenuIcon(AbstractKillAction.ICON)
 			.helpLocation(AbstractKillAction.help(plugin))
-			.enabledWhen(ctx -> isInstance(ctx, TargetKillable.class) && isStopped(ctx))
-			.popupWhen(ctx -> isInstance(ctx, TargetKillable.class) && isStopped(ctx))
+			.enabledWhen(ctx -> isInstance(ctx, TargetKillable.class) && (isStopped(ctx) || !isAccessConditioned(ctx)))
+			.popupWhen(ctx -> isInstance(ctx, TargetKillable.class) && (isStopped(ctx) || !isAccessConditioned(ctx)))
 			.onAction(ctx -> performKill(ctx))
 			.enabled(false)
 			.buildAndInstallLocal(this);
@@ -1066,8 +1014,8 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			.popupMenuGroup(DebuggerResources.GROUP_TARGET, "T" + groupTargetIndex)
 			.popupMenuIcon(AbstractRecordAction.ICON)
 			.helpLocation(new HelpLocation(plugin.getName(), "record"))
-			.enabledWhen(ctx -> isInstance(ctx, TargetProcess.class))
-			.popupWhen(ctx -> isInstance(ctx, TargetProcess.class))
+			.enabledWhen(ctx -> isInstance(ctx, TargetProcess.class) || isRoot(ctx))
+			.popupWhen(ctx -> isInstance(ctx, TargetProcess.class) || isRoot(ctx))
 			.onAction(ctx -> performStartRecording(ctx))
 			.enabled(true)
 			.buildAndInstallLocal(this);
@@ -1148,48 +1096,48 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		groupTargetIndex++;
 
 		new ActionBuilder("Finish", plugin.getName())
-		.keyBinding("F12")
-		.toolBarGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
-		.toolBarIcon(AbstractStepFinishAction.ICON)
-		.popupMenuPath("&Finish")
-		.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
-		.popupMenuIcon(AbstractStepFinishAction.ICON)
-		.helpLocation(AbstractStepFinishAction.help(plugin))
-		//.withContext(ObjectActionContext.class)
-		.enabledWhen(ctx -> 
-			isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
-		.popupWhen(ctx -> 
-			isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
-		.onAction(ctx -> performStepFinish(ctx))
-		.enabled(false)
-		.buildAndInstallLocal(this);
+			.keyBinding("F12")
+			.toolBarGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
+			.toolBarIcon(AbstractStepFinishAction.ICON)
+			.popupMenuPath("&Finish")
+			.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
+			.popupMenuIcon(AbstractStepFinishAction.ICON)
+			.helpLocation(AbstractStepFinishAction.help(plugin))
+			//.withContext(ObjectActionContext.class)
+			.enabledWhen(ctx -> 
+				isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
+			.popupWhen(ctx -> 
+				isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
+			.onAction(ctx -> performStepFinish(ctx))
+			.enabled(false)
+			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
+		
+		new ActionBuilder("Step Last", plugin.getName())
+			.keyBinding("ALT F8")
+			.toolBarGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
+			.toolBarIcon(AbstractStepLastAction.ICON)
+			.popupMenuPath("&Step Last")
+			.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
+			.popupMenuIcon(AbstractStepLastAction.ICON)
+			.helpLocation(AbstractStepLastAction.help(plugin))
+			//.withContext(ObjectActionContext.class)
+			.enabledWhen(ctx -> 
+				isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
+			.popupWhen(ctx -> 
+				isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
+			.onAction(ctx -> performStepLast(ctx))
+			.enabled(false)
+			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
 	
-	groupTargetIndex++;
-	
-	new ActionBuilder("Step Last", plugin.getName())
-		.keyBinding("ALT F8")
-		.toolBarGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
-		.toolBarIcon(AbstractStepLastAction.ICON)
-		.popupMenuPath("&Step Last")
-		.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
-		.popupMenuIcon(AbstractStepLastAction.ICON)
-		.helpLocation(AbstractStepLastAction.help(plugin))
-		//.withContext(ObjectActionContext.class)
-		.enabledWhen(ctx -> 
-			isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
-		.popupWhen(ctx -> 
-			isInstance(ctx, TargetSteppable.class) && isStopped(ctx))
-		.onAction(ctx -> performStepLast(ctx))
-		.enabled(false)
-		.buildAndInstallLocal(this);
-	
-	groupTargetIndex++;
-
 		actionAddBreakpoint = new ActionBuilder("Add Breakpoint", plugin.getName())
 			.keyBinding("F3")
 			.toolBarGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
 			.toolBarIcon(AbstractSetBreakpointAction.ICON)
-			.popupMenuPath("&AddBreakpoint")
+			.popupMenuPath("&Add Breakpoint")
 			.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "C" + groupTargetIndex)
 			.popupMenuIcon(AbstractSetBreakpointAction.ICON)
 			.helpLocation(AbstractSetBreakpointAction.help(plugin))
@@ -1221,6 +1169,49 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		
 		groupTargetIndex++;
 	
+		new ActionBuilder("Toggle", plugin.getName())
+			.keyBinding("T")
+			.toolBarGroup(DebuggerResources.GROUP_CONTROL, "X" + groupTargetIndex)
+			.popupMenuPath("&Toggle")
+			.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "X" + groupTargetIndex)
+			.helpLocation(AbstractToggleAction.help(plugin))
+			.enabledWhen(ctx -> isInstance(ctx, TargetTogglable.class))
+			.popupWhen(ctx -> isInstance(ctx, TargetTogglable.class))
+			.onAction(ctx -> performToggle(ctx))
+			.enabled(false)
+			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
+	
+		new ActionBuilder("Configure", plugin.getName())
+			.keyBinding("C")
+			.toolBarGroup(DebuggerResources.GROUP_CONTROL, "X" + groupTargetIndex)
+			.popupMenuPath("&Configure")
+			.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "X" + groupTargetIndex)
+			.helpLocation(AbstractToggleAction.help(plugin))
+			.enabledWhen(ctx -> isInstance(ctx, TargetConfigurable.class))
+			.popupWhen(ctx -> isInstance(ctx, TargetConfigurable.class))
+			.onAction(ctx -> performConfigure(ctx))
+			.enabled(false)
+			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
+		
+		new ActionBuilder("GoTo", plugin.getName())
+			.keyBinding("G")
+			.toolBarGroup(DebuggerResources.GROUP_CONTROL, "X" + groupTargetIndex)
+			.popupMenuPath("&GoTo")
+			.popupMenuGroup(DebuggerResources.GROUP_CONTROL, "X" + groupTargetIndex)
+			.helpLocation(AbstractToggleAction.help(plugin))
+			.enabledWhen(ctx -> isInstance(ctx, TargetObject.class))
+			.popupWhen(ctx -> isInstance(ctx, TargetObject.class))
+			.onAction(ctx -> performNavigate(ctx))
+			.enabled(false)
+			.buildAndInstallLocal(this);
+		
+		groupTargetIndex++;
+
+	
 		displayAsTreeAction = new DisplayAsTreeAction(tool, plugin.getName(), this);
 		displayAsTableAction = new DisplayAsTableAction(tool, plugin.getName(), this);
 		displayAsGraphAction = new DisplayAsGraphAction(tool, plugin.getName(), this);
@@ -1242,6 +1233,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		importFromXMLAction = new ImportFromXMLAction(tool, plugin.getName(), this);
 		importFromFactsAction = new ImportFromFactsAction(tool, plugin.getName(), this);
 		openTraceAction = new OpenWinDbgTraceAction(tool, plugin.getName(), this);
+		setTimeoutAction = new SetTimeoutAction(tool, plugin.getName(), this);
 	}
 
 	//@formatter:on
@@ -1257,8 +1249,8 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	}
 
 	public void performToggleAutoupdate(ActionContext context) {
-		TargetObject object = getObjectFromContext(context);
 		/*
+		TargetObject object = getObjectFromContext(context);
 		if (object instanceof DefaultTargetObject) {
 			Map<String, ?> attributes = object.listAttributes();
 			Boolean autoupdate = (Boolean) attributes.get(AUTOUPDATE_ATTRIBUTE_NAME);
@@ -1276,7 +1268,6 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	}
 
 	public void performToggleBase(ActionContext context) {
-		//Object contextObject = context.getContextObject();
 		for (TargetConfigurable configurable : configurables) {
 			Object value = configurable.getCachedAttribute(TargetConfigurable.BASE_ATTRIBUTE_NAME);
 			if (value != null) {
@@ -1317,6 +1308,21 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		refresh("");
 	}
 
+	public void performToggleUpdateWhileRunning(ActionContext context) {
+		updateWhileRunning = actionToggleUpdateWhileRunning.isSelected();
+		refresh("");
+	}
+
+	/*
+	public void performToggleAutoPopulateContainers(ActionContext context) {
+		suppressDescent = !actionSuppressDescent.isSelected();
+		if (currentModel != null) {
+			currentModel.setSuppressDescent(suppressDescent);
+		}
+		refresh("");
+	}
+	*/
+
 	protected <T extends TargetObject> void performAction(ActionContext context,
 			boolean fallbackRoot, Class<T> cls,
 			Function<T, CompletableFuture<Void>> func, String errorMsg) {
@@ -1339,36 +1345,32 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		if (currentProgram == null) {
 			return;
 		}
-		performAction(context, true, TargetLauncher.class, launcher -> {
-			// TODO: A generic or pluggable way of deriving the launch arguments
-			return launcher.launch(Map.of(
-				TargetCmdLineLauncher.CMDLINE_ARGS_NAME, currentProgram.getExecutablePath()));
-		}, "Couldn't launch");
+		performLaunchAction(context, false);
 	}
 
 	public void performLaunch(ActionContext context) {
+		performLaunchAction(context, true);
+	}
+
+	private void performLaunchAction(ActionContext context, boolean p) {
 		performAction(context, true, TargetLauncher.class, launcher -> {
-			if (currentProgram != null) {
-				// TODO: A generic or pluggable way of deriving the default arguments
-				String path = currentProgram.getExecutablePath();
-				String cmdlineArgs = launchDialog.getMemorizedArgument(
-					TargetCmdLineLauncher.CMDLINE_ARGS_NAME, String.class);
-				if (path != null) {
-					if (cmdlineArgs == null) {
-						launchDialog.setMemorizedArgument(TargetCmdLineLauncher.CMDLINE_ARGS_NAME,
-							String.class, path);
-					}
-					else if (!cmdlineArgs.startsWith(path)) {
-						launchDialog.setMemorizedArgument(TargetCmdLineLauncher.CMDLINE_ARGS_NAME,
-							String.class, path);
-					}
+			var locals = new Object() {
+				boolean prompt = p;
+			};
+			return AsyncUtils.loop(TypeSpec.VOID, (loop) -> {
+				Map<String, ?> args = launchOffer.getLauncherArgs(launcher, locals.prompt);
+				if (args == null) {
+					// Cancelled
+					loop.exit();
 				}
-			}
-			Map<String, ?> args = launchDialog.promptArguments(launcher.getParameters());
-			if (args == null) {
-				return AsyncUtils.NIL;
-			}
-			return launcher.launch(args);
+				else {
+					launcher.launch(args).thenAccept(loop::exit).exceptionally(ex -> {
+						loop.repeat();
+						return null;
+					});
+				}
+				locals.prompt = true;
+			});
 		}, "Couldn't launch");
 	}
 
@@ -1379,11 +1381,9 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			if (obj instanceof TargetAttachable) {
 				return attacher.attach((TargetAttachable) obj);
 			}
-			else {
-				attachDialog.fetchAndDisplayAttachable();
-				tool.showDialog(attachDialog);
-				return AsyncUtils.NIL;
-			}
+			attachDialog.fetchAndDisplayAttachable();
+			tool.showDialog(attachDialog);
+			return AsyncUtils.NIL;
 		}, "Couldn't attach");
 	}
 
@@ -1398,8 +1398,96 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		}).exceptionally(DebuggerResources.showError(getComponent(), "Couldn't re-attach"));
 	}
 
-	public void startRecording(TargetProcess targetObject, boolean prompt) {
-		TraceRecorder rec;
+	public void performMethod(ActionContext context) {
+		TargetObject obj = getObjectFromContext(context);
+		List<String> list = new ArrayList<>();
+		Map<String, ?> attributes = obj.getCachedAttributes();
+		for (Entry<String, ?> entry : attributes.entrySet()) {
+			if (entry.getValue() instanceof TargetMethod) {
+				list.add(entry.getKey());
+			}
+		}
+		String choice = OptionDialog.showInputChoiceDialog(getComponent(), "Methods", "Methods",
+			list.toArray(new String[] {}), lastMethod, OptionDialog.QUESTION_MESSAGE);
+		if (choice != null) {
+			TargetMethod method = (TargetMethod) attributes.get(choice);
+			Map<String, ?> args = methodDialog.promptArguments(method.getParameters());
+			if (args != null) {
+				String script = (String) args.get("Script");
+				if (script != null && !script.isEmpty()) {
+					mapScript(args);
+				}
+				method.invoke(args);
+				if (!choice.equals("unload")) {
+					lastMethod = choice;
+				}
+			}
+		}
+	}
+
+	private void mapScript(Map<String, ?> args) {
+		String name = (String) args.get("Name");
+		String scriptName = (String) args.get("Script");
+		if (name.isEmpty() || scriptName.isEmpty()) {
+			return;
+		}
+
+		ResourceFile sourceFile = GhidraScriptUtil.findScriptByName(scriptName);
+		if (sourceFile == null) {
+			Msg.error(this, "Couldn't find script");
+			return;
+		}
+		GhidraScriptProvider provider = GhidraScriptUtil.getProvider(sourceFile);
+		if (provider == null) {
+			Msg.error(this, "Couldn't find script provider");
+			return;
+		}
+
+		PrintWriter writer = consoleService.getStdOut();
+		GhidraScript script;
+		try {
+			script = provider.getScriptInstance(sourceFile, writer);
+		}
+		catch (GhidraScriptLoadException e) {
+			Msg.error(this, e.getMessage());
+			return;
+		}
+		scripts.put(name, script);
+		scriptNames.put(name, scriptName);
+	}
+
+	private void fireScript(String key, String[] args) {
+		GhidraScript script = scripts.get(key);
+		String scriptName = scriptNames.get(key);
+		if (script == null || scriptName == null) {
+			return;
+		}
+
+		Project project = tool.getProject();
+
+		ProgramLocation currentLocation = listingService.getCurrentLocation();
+		ProgramSelection currentSelection = listingService.getCurrentSelection();
+
+		GhidraState state = new GhidraState(tool, project, currentProgram,
+			currentLocation, currentSelection, null);
+
+		PrintWriter writer = consoleService.getStdOut();
+		TaskMonitor monitor = TaskMonitor.DUMMY;
+		script.set(state, monitor, writer);
+
+		try {
+			script.runScript(scriptName, args);
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	public void startRecording(TargetObject targetObject, boolean prompt) {
+		TraceRecorder rec = modelService.getRecorder(targetObject);
+		if (rec != null) {
+			return; // Already being recorded
+		}
 		if (prompt) {
 			rec = modelService.recordTargetPromptOffers(targetObject);
 		}
@@ -1412,7 +1500,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		//this.recorder = rec;
 		Trace trace = rec.getTrace();
 		traceManager.openTrace(trace);
-		traceManager.activateTrace(trace);
+		traceManager.activate(traceManager.resolveTrace(trace), ActivationCause.START_RECORDING);
 	}
 
 	public void stopRecording(TargetObject targetObject) {
@@ -1433,6 +1521,11 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 	}
 
 	public void performStartRecording(ActionContext context) {
+		TargetObject maybeRoot = getObjectFromContext(context);
+		if (maybeRoot.isRoot()) {
+			startRecording(maybeRoot, true);
+			return;
+		}
 		performAction(context, false, TargetProcess.class, proc -> {
 			TargetProcess valid = DebugModelConventions.liveProcessOrNull(proc);
 			if (valid != null) {
@@ -1472,18 +1565,68 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 			if (extendedStep.equals("")) {
 				return s.step(TargetStepKind.EXTENDED);
 			}
-			else {
-				return s.step(Map.of("Command", extendedStep));
-			}
+			return s.step(Map.of("Command", extendedStep));
 		}, "Couldn't step extended(" + extendedStep + ")");
 	}
 
 	public void performSetBreakpoint(ActionContext context) {
+		setText(context);
 		performAction(context, false, TargetBreakpointSpecContainer.class, container -> {
 			breakpointDialog.setContainer(container);
 			tool.showDialog(breakpointDialog);
 			return AsyncUtils.NIL;
 		}, "Couldn't set breakpoint");
+	}
+
+	private void setText(ActionContext context) {
+		breakpointDialog.setText("");
+		TargetObject obj = getObjectFromContext(context);
+		Object key = obj.getCachedAttribute(TargetBreakpointSpec.AS_BPT_ATTRIBUTE_NAME);
+		if (key != null) {
+			breakpointDialog.setText(key.toString());
+		}
+		else {
+			if (obj instanceof DummyTargetObject) {
+				DummyTargetObject dto = (DummyTargetObject) obj;
+				breakpointDialog.setText(dto.getValue().toString());
+			}
+		}
+	}
+
+	public void performToggle(ActionContext context) {
+		performAction(context, false, TargetTogglable.class, t -> {
+			return t.toggle(!t.isEnabled());
+		}, "Couldn't toggle");
+	}
+
+	public void performConfigure(ActionContext context) {
+		performAction(context, false, TargetConfigurable.class, configurable -> {
+			Map<String, ParameterDescription<?>> configParameters =
+				configurable.getConfigurableOptions();
+			if (configParameters.isEmpty()) {
+				return AsyncUtils.NIL;
+			}
+			Map<String, ?> args = configDialog.promptArguments(configParameters);
+			if (args == null) {
+				// User cancelled
+				return AsyncUtils.NIL;
+			}
+			AsyncFence fence = new AsyncFence();
+			for (Entry<String, ?> entry : args.entrySet()) {
+				fence.include(
+					configurable.writeConfigurationOption(entry.getKey(), entry.getValue()));
+			}
+			return fence.ready();
+		}, "Couldn't configure one or more options");
+	}
+
+	public void performNavigate(ActionContext context) {
+		performAction(context, false, TargetObject.class, t -> {
+			if (t != null) {
+				navigateToSelectedObject(t, null);
+			}
+			return AsyncUtils.NIL;
+		}, "Couldn't navigate");
 	}
 
 	public void initiateConsole(ActionContext context) {
@@ -1493,8 +1636,20 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		}, "Couldn't show interpreter");
 	}
 
+	public boolean isAccessConditioned(ActionContext context) {
+		TargetObject object = this.getObjectFromContext(context);
+		if (object == null) {
+			return false;
+		}
+		return object instanceof TargetAccessConditioned;
+	}
+
 	public boolean isStopped(ActionContext context) {
 		TargetObject object = this.getObjectFromContext(context);
+		return isStopped(object);
+	}
+
+	public boolean isStopped(TargetObject object) {
 		if (object == null) {
 			return false;
 		}
@@ -1543,9 +1698,21 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		}
 
 		@Override
-		public void consoleOutput(TargetObject console, Channel channel, String out) {
-			//getPlugin().showConsole((TargetInterpreter) console);
-			System.err.println("consoleOutput: " + out);
+		public void consoleOutput(TargetObject console, Channel channel, byte[] bytes) {
+			String ret = new String(bytes);
+			if (ret.contains(TargetMethod.REDIRECT)) {
+				String[] split = ret.split(TargetMethod.REDIRECT);
+				String key = split[0];
+				String val = split[1];
+				GhidraScript script = scripts.get(key);
+				if (script != null) {
+					String[] args = new String[1];
+					args[0] = val;
+					fireScript(key, args);
+					return;
+				}
+			}
+			System.err.println("consoleOutput: " + new String(ret));
 		}
 
 		@AttributeCallback(TargetObject.DISPLAY_ATTRIBUTE_NAME)
@@ -1567,13 +1734,13 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		@AttributeCallback(TargetExecutionStateful.STATE_ATTRIBUTE_NAME)
 		public void executionStateChanged(TargetObject object, TargetExecutionState state) {
 			//this.state = state;
-			plugin.getTool().contextChanged(DebuggerObjectsProvider.this);
+			contextChanged();
 		}
 
 		@AttributeCallback(TargetFocusScope.FOCUS_ATTRIBUTE_NAME)
 		public void focusChanged(TargetObject object, TargetObject focused) {
 			plugin.setFocus(object, focused);
-			plugin.getTool().contextChanged(DebuggerObjectsProvider.this);
+			contextChanged();
 		}
 
 		@Override
@@ -1667,7 +1834,12 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		if (focused.getModel() != currentModel) {
 			return;
 		}
-		pane.setFocus(object, focused);
+		this.targetFocus = focused;
+		if (isStopped(focused) || isUpdateWhileRunning()) {
+			if (pane != null) {
+				pane.setFocus(object, focused);
+			}
+		}
 	}
 
 	public DebuggerTraceManagerService getTraceManager() {
@@ -1690,41 +1862,20 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		this.selectionOnly = localOnly;
 	}
 
-	public Color getColor(String name) {
-		switch (name) {
-			case OPTION_NAME_ACCESSOR_FOREGROUND_COLOR:
-				return accessorForegroundColor;
-			case OPTION_NAME_DEFAULT_BACKGROUND_COLOR:
-				return defaultBackgroundColor;
-			case OPTION_NAME_DEFAULT_FOREGROUND_COLOR:
-				return defaultForegroundColor;
-			case OPTION_NAME_ERROR_FOREGROUND_COLOR:
-				return errorForegroundColor;
-			case OPTION_NAME_INTRINSIC_FOREGROUND_COLOR:
-				return intrinsicForegroundColor;
-			case OPTION_NAME_INVISIBLE_FOREGROUND_COLOR:
-				return invisibleForegroundColor;
-			case OPTION_NAME_INVALIDATED_FOREGROUND_COLOR:
-				return invalidatedForegroundColor;
-			case OPTION_NAME_MODIFIED_FOREGROUND_COLOR:
-				return modifiedForegroundColor;
-			case OPTION_NAME_SUBSCRIBED_FOREGROUND_COLOR:
-				return subscribedForegroundColor;
-			case OPTION_NAME_LINK_FOREGROUND_COLOR:
-				return linkForegroundColor;
-			case OPTION_NAME_TARGET_FOREGROUND_COLOR:
-				return targetForegroundColor;
-			default:
-				return Color.BLACK;
-		}
-	}
-
 	public boolean isAutorecord() {
 		return autoRecord;
 	}
 
 	public void setAutorecord(boolean autorecord) {
 		this.autoRecord = autorecord;
+	}
+
+	public int getNodeTimeout() {
+		return nodeTimeout;
+	}
+
+	public void setNodeTimeout(int timeout) {
+		this.nodeTimeout = timeout;
 	}
 
 	public void updateActions(ObjectContainer providerContainer) {
@@ -1749,7 +1900,7 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 
 	public void writeConfigState(SaveState saveState) {
 		CONFIG_STATE_HANDLER.writeConfigState(this, saveState);
-		launchDialog.writeConfigState(saveState);
+		methodDialog.writeConfigState(saveState);
 	}
 
 	public void readConfigState(SaveState saveState) {
@@ -1758,8 +1909,9 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		actionToggleAutoRecord.setSelected(autoRecord);
 		actionToggleHideIntrinsics.setSelected(hideIntrinsics);
 		actionToggleSelectionOnly.setSelected(selectionOnly);
+		setTimeoutAction.setNodeTimeout(nodeTimeout);
 
-		launchDialog.readConfigState(saveState);
+		methodDialog.readConfigState(saveState);
 	}
 
 	@Override
@@ -1781,4 +1933,74 @@ public class DebuggerObjectsProvider extends ComponentProviderAdapter
 		return listener.queue.in;
 	}
 
+	public Address navigateToSelectedObject(TargetObject object, Object value) {
+		if (listingService == null || modelService == null) {
+			return null;
+		}
+		// TODO: Could probably inspect schema for any attribute of type Address[Range], or String
+		if (value == null) {
+			value = object.getCachedAttribute(TargetObject.PREFIX_INVISIBLE + "address");
+		}
+		if (value == null) {
+			value = object.getCachedAttribute(TargetObject.PREFIX_INVISIBLE + "range");
+		}
+		if (value == null) {
+			value = object.getCachedAttribute(TargetObject.VALUE_ATTRIBUTE_NAME);
+		}
+		if (value == null) {
+			return null;
+		}
+
+		Address addr = null;
+		if (value instanceof Address a) {
+			addr = a;
+		}
+		else if (value instanceof AddressRange range) {
+			addr = range.getMinAddress();
+		}
+		else if (value instanceof Long lval) {
+			addr = object.getModel().getAddress("ram", lval);
+		}
+		else if (value instanceof String sval) {
+			addr = stringToAddress(object, addr, sval);
+		}
+		if (addr != null) {
+			TraceRecorder recorder = modelService.getRecorderForSuccessor(object);
+			if (recorder == null) {
+				recorder = modelService.getRecorder(currentTrace);
+				if (recorder == null) {
+					return addr;
+				}
+			}
+			DebuggerMemoryMapper memoryMapper = recorder.getMemoryMapper();
+			Address traceAddr = memoryMapper.targetToTrace(addr);
+			listingService.goTo(traceAddr, true);
+		}
+		return addr;
+	}
+
+	private Address stringToAddress(TargetObject selectedObject, Address addr, String sval) {
+		Integer base = 16;
+		if (selectedObject instanceof TargetConfigurable) {
+			TargetConfigurable configurable = (TargetConfigurable) selectedObject;
+			base =
+				(Integer) configurable.getCachedAttribute(TargetConfigurable.BASE_ATTRIBUTE_NAME);
+		}
+		try {
+			Long lval = Long.parseLong(sval, base);
+			addr = selectedObject.getModel().getAddress("ram", lval);
+		}
+		catch (NumberFormatException nfe) {
+			// IGNORE
+		}
+		return addr;
+	}
+
+	public boolean isUpdateWhileRunning() {
+		return updateWhileRunning;
+	}
+
+	public TargetObject getFocus() {
+		return targetFocus;
+	}
 }

@@ -15,8 +15,7 @@
  */
 package ghidra.trace.database.symbol;
 
-import java.util.Collection;
-import java.util.Collections;
+import java.util.*;
 import java.util.function.Predicate;
 
 import com.google.common.collect.Collections2;
@@ -65,7 +64,8 @@ public abstract class AbstractDBTraceSymbolSingleTypeView<T extends AbstractDBTr
 
 	public Collection<? extends T> getChildrenNamed(String name, TraceNamespaceSymbol parent) {
 		try (LockHold hold = LockHold.lock(manager.lock.readLock())) {
-			DBTraceNamespaceSymbol dbnsParent = manager.assertIsMine((Namespace) parent);
+			DBTraceNamespaceSymbol dbnsParent =
+				manager.assertIsMine((Namespace) Objects.requireNonNull(parent));
 			return Collections.unmodifiableCollection(Collections2.filter(
 				symbolsByParentID.get(dbnsParent.getID()), s -> name.equals(s.name)));
 		}
@@ -86,6 +86,10 @@ public abstract class AbstractDBTraceSymbolSingleTypeView<T extends AbstractDBTr
 		Predicate<String> predicate =
 			UserSearchUtils.createSearchPattern(glob, caseSensitive).asPredicate();
 		return Collections2.filter(view, s -> predicate.test(s.name));
+	}
+
+	public Iterator<? extends T> scanByName(String startName) {
+		return symbolsByName.tail(startName, true).values().iterator();
 	}
 
 	public T getByKey(long key) {

@@ -416,7 +416,7 @@ public class DataTypeParser {
 			// handle C primitives (e.g.  long long, unsigned long int, etc.)
 			DataType dataType = DataTypeUtilities.getCPrimitiveDataType(baseName);
 			if (dataType != null) {
-				return dataType;
+				return dataType.clone(dtm);
 			}
 
 			dtm.findDataTypes(baseName, list);
@@ -480,6 +480,12 @@ public class DataTypeParser {
 
 			if (templateCount != 0) {
 				++nextIndex;
+				continue;
+			}
+
+			char n = nextIndex + 1 < dataTypeString.length() ? dataTypeString.charAt(nextIndex + 1) : '\0';
+			if (c == ':' && n == ':') {
+				nextIndex += 2;
 				continue;
 			}
 
@@ -573,9 +579,16 @@ public class DataTypeParser {
 
 		ArraySpecPiece(String piece) throws InvalidDataTypeException {
 			if (piece.startsWith("[") && piece.endsWith("]")) {
-				String elementCountStr = piece.substring(1, piece.length() - 1);
 				try {
-					elementCount = parseSize(elementCountStr);
+					String elementCountStr = piece.substring(1, piece.length() - 1);
+					if (elementCountStr.length() == 0) {
+						// treat empty array spec same as 0
+						// consumer may need to handle resulting array as a pointer (e.g., parameter)
+						elementCount = 0;
+					}
+					else {
+						elementCount = parseSize(elementCountStr);
+					}
 					return;
 				}
 				catch (NumberFormatException e) {

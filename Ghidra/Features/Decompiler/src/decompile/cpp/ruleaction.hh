@@ -45,8 +45,10 @@ class AddTreeState {
   Varnode *ptr;			///< The pointer varnode
   const TypePointer *ct;	///< The pointer data-type
   const Datatype *baseType;	///< The base data-type being pointed at
+  const TypePointerRel *pRelType;	///< A copy of \b ct, if it is a relative pointer
   int4 ptrsize;			///< Size of the pointer
   int4 size;			///< Size of data-type being pointed to (in address units) or 0 for open ended pointer
+  int4 baseSlot;		///< Slot of the ADD tree base that is holding the pointer
   uintb ptrmask;		///< Mask for modulo calculations in ptr space
   uintb offset;			///< Number of bytes we dig into the base data-type
   uintb correct;		///< Number of bytes being double counted
@@ -60,6 +62,7 @@ class AddTreeState {
   bool isDistributeUsed;	///< Are terms produced by distributing used
   bool isSubtype;		///< Is there a sub-type (using CPUI_PTRSUB)
   bool valid;			///< Set to \b true if the whole expression can be transformed
+  bool isDegenerate;		///< Set to \b true if pointer to unitsize or smaller
   uint4 findArrayHint(void) const;	///< Look for evidence of an array in a sub-component
   bool hasMatchingSubType(uintb off,uint4 arrayHint,uintb *newoff) const;
   bool checkMultTerm(Varnode *vn,PcodeOp *op, uintb treeCoeff);	///< Accumulate details of INT_MULT term and continue traversal if appropriate
@@ -68,11 +71,13 @@ class AddTreeState {
   void calcSubtype(void);		///< Calculate final sub-type offset
   Varnode *buildMultiples(void);	///< Build part of tree that is multiple of base size
   Varnode *buildExtra(void);		///< Build part of tree not accounted for by multiples or \e offset
+  bool buildDegenerate(void);		///< Transform ADD into degenerate PTRADD
   void buildTree(void);			///< Build the transformed ADD tree
   void clear(void);			///< Reset for a new ADD tree traversal
 public:
   AddTreeState(Funcdata &d,PcodeOp *op,int4 slot);	///< Construct given root of ADD tree and pointer
   bool apply(void);		///< Attempt to transform the pointer expression
+  bool initAlternateForm(void);		///< Prepare analysis if there is an alternate form of the base pointer
 };
 
 class RuleEarlyRemoval : public Rule {
@@ -935,16 +940,6 @@ public:
   virtual void getOpList(vector<uint4> &oplist) const;
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
 };
-class RuleEmbed : public Rule {
-public:
-  RuleEmbed(const string &g) : Rule(g, 0, "embed") {}	///< Constructor
-  virtual Rule *clone(const ActionGroupList &grouplist) const {
-    if (!grouplist.contains(getGroup())) return (Rule *)0;
-    return new RuleEmbed(getGroup());
-  }
-  virtual void getOpList(vector<uint4> &oplist) const;
-  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
-};
 class RuleSwitchSingle : public Rule {
 public:
   RuleSwitchSingle(const string &g) : Rule(g,0,"switchsingle") {}	///< Constructor
@@ -1027,7 +1022,6 @@ public:
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
 };
 class RulePtrArith : public Rule {
-  static bool verifyAddTreeBottom(PcodeOp *op,int4 slot);
   static bool verifyPreferredPointer(PcodeOp *op,int4 slot);
 public:
   RulePtrArith(const string &g) : Rule(g, 0, "ptrarith") {}	///< Constructor
@@ -1037,6 +1031,7 @@ public:
   }
   virtual void getOpList(vector<uint4> &oplist) const;
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+  static int4 evaluatePointerExpression(PcodeOp *op,int4 slot);
 };
 class RuleStructOffset0 : public Rule {
 public:
@@ -1049,6 +1044,8 @@ public:
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
 };
 class RulePushPtr : public Rule {
+  static Varnode *buildVarnodeOut(Varnode *vn,PcodeOp *op,Funcdata &data);
+  static void collectDuplicateNeeds(vector<PcodeOp *> &reslist,Varnode *vn);
 public:
   RulePushPtr(const string &g) : Rule(g, 0, "pushptr") {}	///< Constructor
   virtual Rule *clone(const ActionGroupList &grouplist) const {
@@ -1057,6 +1054,7 @@ public:
   }
   virtual void getOpList(vector<uint4> &oplist) const;
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+  static void duplicateNeed(PcodeOp *op,Funcdata &data);
 };
 class RulePtraddUndo : public Rule {
 public:
@@ -1131,6 +1129,34 @@ public:
   virtual Rule *clone(const ActionGroupList &grouplist) const {
     if (!grouplist.contains(getGroup())) return (Rule *)0;
     return new RulePtrsubCharConstant(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+};
+
+class RuleExtensionPush : public Rule {
+public:
+  RuleExtensionPush(const string &g) : Rule( g, 0, "extensionpush") {}		///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RuleExtensionPush(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+};
+
+class RulePieceStructure : public Rule {
+  /// \brief Markup for Varnodes pieced together into structure/array
+  static Datatype *determineDatatype(Varnode *vn,int4 &baseOffset);
+  static bool spanningRange(Datatype *ct,int4 off,int4 size);
+  static bool convertZextToPiece(PcodeOp *zext,Datatype *structuredType,int4 offset,Funcdata &data);
+  static bool findReplaceZext(vector<PieceNode> &stack,Datatype *structuredType,Funcdata &data);
+  static bool separateSymbol(Varnode *root,Varnode *leaf);
+public:
+  RulePieceStructure(const string &g) : Rule( g, 0, "piecestructure") {}	///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RulePieceStructure(getGroup());
   }
   virtual void getOpList(vector<uint4> &oplist) const;
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
@@ -1218,12 +1244,34 @@ public:
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
 };
 
+class RuleDivChain : public Rule {
+public:
+  RuleDivChain(const string &g) : Rule( g, 0, "divchain") {}	///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RuleDivChain(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+};
+
 class RuleSignForm : public Rule {
 public:
   RuleSignForm(const string &g) : Rule( g, 0, "signform") {}	///< Constructor
   virtual Rule *clone(const ActionGroupList &grouplist) const {
     if (!grouplist.contains(getGroup())) return (Rule *)0;
     return new RuleSignForm(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+};
+
+class RuleSignForm2 : public Rule {
+public:
+  RuleSignForm2(const string &g) : Rule( g, 0, "signform2") {}	///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RuleSignForm2(getGroup());
   }
   virtual void getOpList(vector<uint4> &oplist) const;
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
@@ -1246,6 +1294,42 @@ public:
   virtual Rule *clone(const ActionGroupList &grouplist) const {
     if (!grouplist.contains(getGroup())) return (Rule *)0;
     return new RuleModOpt(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+};
+
+class RuleSignMod2nOpt : public Rule {
+public:
+  RuleSignMod2nOpt(const string &g) : Rule( g, 0, "signmod2nopt") {}	///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RuleSignMod2nOpt(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+  static Varnode *checkSignExtraction(Varnode *outVn);
+};
+
+class RuleSignMod2Opt : public Rule {
+public:
+  RuleSignMod2Opt(const string &g) : Rule( g, 0, "signmod2opt") {}	///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RuleSignMod2Opt(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
+};
+
+class RuleSignMod2nOpt2 : public Rule {
+  static Varnode *checkMultiequalForm(PcodeOp *op,uintb npow);
+  static Varnode *checkSignExtForm(PcodeOp *op);
+public:
+  RuleSignMod2nOpt2(const string &g) : Rule( g, 0, "signmod2nopt2") {}	///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RuleSignMod2nOpt2(getGroup());
   }
   virtual void getOpList(vector<uint4> &oplist) const;
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
@@ -1464,6 +1548,17 @@ public:
   virtual void getOpList(vector<uint4> &oplist) const;
   virtual int4 applyOp(PcodeOp *op,Funcdata &data);
   static Varnode *getBooleanResult(Varnode *vn,int4 bitPos,int4 &constRes);
+};
+
+class RuleOrMultiBool : public Rule {
+public:
+  RuleOrMultiBool(const string &g) : Rule( g, 0, "ormultibool") {}	///< Constructor
+  virtual Rule *clone(const ActionGroupList &grouplist) const {
+    if (!grouplist.contains(getGroup())) return (Rule *)0;
+    return new RuleOrMultiBool(getGroup());
+  }
+  virtual void getOpList(vector<uint4> &oplist) const;
+  virtual int4 applyOp(PcodeOp *op,Funcdata &data);
 };
 
 class RulePiecePathology : public Rule {

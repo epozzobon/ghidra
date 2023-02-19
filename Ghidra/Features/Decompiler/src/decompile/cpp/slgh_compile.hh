@@ -22,6 +22,10 @@
 #include <iostream>
 #include <sstream>
 
+using std::cout;
+using std::cerr;
+using std::out_of_range;
+
 /// \brief A helper class to associate a \e named Constructor section with its symbol scope
 ///
 /// A Constructor can contain multiple named sections of p-code.  There is a \e main
@@ -246,7 +250,7 @@ public:
 /// parser.
 class SleighPcode : public PcodeCompile {
   SleighCompile *compiler;			///< The main SLEIGH parser
-  virtual uintb allocateTemp(void);
+  virtual uint4 allocateTemp(void);
   virtual const Location *getLocation(SleighSymbol *sym) const;
   virtual void reportError(const Location* loc, const string &msg);
   virtual void reportWarning(const Location* loc, const string &msg);
@@ -332,7 +336,7 @@ public:
   void reportWarning(const Location *loc, const string &msg);	///< Issue a warning message with a source location
   int4 numErrors(void) const { return errors; }			///< Return the current number of fatal errors
 
-  uintb getUniqueAddr(void);					///< Get the next available temporary register offset
+  uint4 getUniqueAddr(void);					///< Get the next available temporary register offset
 
   /// \brief Set whether unnecessary truncation and extension operators generate warnings individually
   ///

@@ -15,20 +15,26 @@
  */
 package agent.gdb;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import agent.gdb.model.impl.GdbModelImpl;
 import agent.gdb.pty.ssh.GhidraSshPtyFactory;
 import ghidra.dbg.DebuggerModelFactory;
 import ghidra.dbg.DebuggerObjectModel;
+import ghidra.dbg.util.ShellUtils;
 import ghidra.dbg.util.ConfigurableFactory.FactoryDescription;
+import ghidra.program.model.listing.Program;
 
 @FactoryDescription(
-	brief = "GNU gdb via SSH",
-	htmlDetails = "Launch a GDB session over an SSH connection")
+	brief = "gdb via SSH",
+	htmlDetails = """
+			Connect to gdb using SSH.
+			This is best for remote Linux and Unix userspace targets when gdb is installed on the
+			remote host.""")
 public class GdbOverSshDebuggerModelFactory implements DebuggerModelFactory {
 
-	private String gdbCmd = "gdb";
+	private String gdbCmd = "/usr/bin/gdb";
 	@FactoryOption("GDB launch command")
 	public final Property<String> gdbCommandOption =
 		Property.fromAccessors(String.class, this::getGdbCommand, this::setGdbCommand);
@@ -38,43 +44,65 @@ public class GdbOverSshDebuggerModelFactory implements DebuggerModelFactory {
 	public final Property<Boolean> useExistingOption =
 		Property.fromAccessors(boolean.class, this::isUseExisting, this::setUseExisting);
 
-	private String hostname = "localhost";
+	private String hostname = GhidraSshPtyFactory.DEFAULT_HOSTNAME;
 	@FactoryOption("SSH hostname")
 	public final Property<String> hostnameOption =
 		Property.fromAccessors(String.class, this::getHostname, this::setHostname);
 
-	private int port = 22;
+	private int port = GhidraSshPtyFactory.DEFAULT_PORT;
 	@FactoryOption("SSH TCP port")
 	public final Property<Integer> portOption =
 		Property.fromAccessors(Integer.class, this::getPort, this::setPort);
 
-	private String username = "user";
+	private String username = GhidraSshPtyFactory.DEFAULT_USERNAME;
 	@FactoryOption("SSH username")
 	public final Property<String> usernameOption =
 		Property.fromAccessors(String.class, this::getUsername, this::setUsername);
 
-	private String keyFile = "";
-	@FactoryOption("SSH identity (blank for password auth)")
+	private String configFile = GhidraSshPtyFactory.DEFAULT_CONFIG_FILE;
+	@FactoryOption("Open SSH config file")
 	public final Property<String> keyFileOption =
-		Property.fromAccessors(String.class, this::getKeyFile, this::setKeyFile);
+		Property.fromAccessors(String.class, this::getConfigFile, this::setConfigFile);
+
+	// Always default to false, despite local system, because remote is likely Linux.
+	private boolean useCrlf = false;
+	@FactoryOption("Use DOS line endings (unchecked for UNIX remote)")
+	public final Property<Boolean> crlfNewLineOption =
+		Property.fromAccessors(Boolean.class, this::isUseCrlf, this::setUseCrlf);
 
 	@Override
 	public CompletableFuture<? extends DebuggerObjectModel> build() {
+		List<String> gdbCmdLine = ShellUtils.parseArgs(gdbCmd);
 		return CompletableFuture.supplyAsync(() -> {
 			GhidraSshPtyFactory factory = new GhidraSshPtyFactory();
 			factory.setHostname(hostname);
 			factory.setPort(port);
-			factory.setKeyFile(keyFile);
+			factory.setConfigFile(configFile);
 			factory.setUsername(username);
 			return new GdbModelImpl(factory);
 		}).thenCompose(model -> {
-			return model.startGDB(existing ? null : gdbCmd, new String[] {}).thenApply(__ -> model);
+			if (useCrlf) {
+				model.setDosNewLine();
+			}
+			else {
+				model.setUnixNewLine();
+			}
+			return model
+					.startGDB(existing ? null : gdbCmdLine.get(0),
+						gdbCmdLine.subList(1, gdbCmdLine.size()).toArray(String[]::new))
+					.thenApply(__ -> model);
 		});
 	}
 
 	@Override
-	public boolean isCompatible() {
-		return true;
+	public int getPriority(Program program) {
+		if (program != null) {
+			String exe = program.getExecutablePath();
+			if (exe == null || exe.isBlank()) {
+				return -1;
+			}
+		}
+		return 75;
 	}
 
 	public String getGdbCommand() {
@@ -118,11 +146,19 @@ public class GdbOverSshDebuggerModelFactory implements DebuggerModelFactory {
 		this.username = username;
 	}
 
-	public String getKeyFile() {
-		return keyFile;
+	public String getConfigFile() {
+		return configFile;
 	}
 
-	public void setKeyFile(String keyFile) {
-		this.keyFile = keyFile;
+	public void setConfigFile(String configFile) {
+		this.configFile = configFile;
+	}
+
+	public boolean isUseCrlf() {
+		return useCrlf;
+	}
+
+	public void setUseCrlf(boolean useCrlf) {
+		this.useCrlf = useCrlf;
 	}
 }

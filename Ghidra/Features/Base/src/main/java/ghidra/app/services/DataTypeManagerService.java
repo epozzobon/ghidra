@@ -47,7 +47,7 @@ public interface DataTypeManagerService extends DataTypeQueryService {
 	/**
 	 * Get the data types marked as favorites that will show up on
 	 * a popup menu.
-	 * @return list of favorite datatypess
+	 * @return list of favorite datatypes
 	 */
 	public List<DataType> getFavorites();
 
@@ -150,6 +150,12 @@ public interface DataTypeManagerService extends DataTypeQueryService {
 	 * @param dataType The data type to select.
 	 */
 	public void setDataTypeSelected(DataType dataType);
+
+	/**
+	 * Returns the list of data types that are currently selected in the data types tree
+	 * @return  the list of data types that are currently selected in the data types tree
+	 */
+	public List<DataType> getSelectedDatatypes();
 
 	/**
 	 * Shows the user a dialog that allows them to choose a data type from a tree of all available

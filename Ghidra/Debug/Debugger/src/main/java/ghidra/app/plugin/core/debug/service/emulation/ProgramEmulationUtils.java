@@ -17,15 +17,16 @@ package ghidra.app.plugin.core.debug.service.emulation;
 
 import java.io.IOException;
 import java.math.BigInteger;
-import java.util.EnumSet;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import com.google.common.collect.Range;
-
 import ghidra.app.plugin.core.debug.service.modules.DebuggerStaticMappingUtils;
+import ghidra.app.plugin.core.debug.service.modules.DebuggerStaticMappingUtils.Extrema;
 import ghidra.app.services.DebuggerEmulationService;
+import ghidra.dbg.target.*;
+import ghidra.dbg.target.schema.TargetObjectSchema;
+import ghidra.dbg.util.*;
 import ghidra.framework.model.DomainFile;
 import ghidra.program.model.address.*;
 import ghidra.program.model.lang.*;
@@ -34,15 +35,15 @@ import ghidra.program.model.listing.ProgramContext;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.util.ProgramLocation;
 import ghidra.trace.database.DBTrace;
-import ghidra.trace.model.DefaultTraceLocation;
-import ghidra.trace.model.Trace;
+import ghidra.trace.model.*;
 import ghidra.trace.model.memory.*;
 import ghidra.trace.model.modules.TraceConflictedMappingException;
-import ghidra.trace.model.thread.TraceThread;
-import ghidra.trace.model.thread.TraceThreadManager;
+import ghidra.trace.model.target.TraceObject;
+import ghidra.trace.model.target.TraceObjectKeyPath;
+import ghidra.trace.model.thread.*;
 import ghidra.trace.model.time.TraceSnapshot;
-import ghidra.util.ComparatorMath;
 import ghidra.util.DifferenceAddressSetView;
+import ghidra.util.NumericUtilities;
 import ghidra.util.database.UndoableTransaction;
 import ghidra.util.exception.DuplicateNameException;
 
@@ -130,43 +131,63 @@ public enum ProgramEmulationUtils {
 	 * A transaction must already be started on the destination trace.
 	 * 
 	 * @param snapshot the destination snapshot, usually 0
-	 * @param program the progam to load
+	 * @param program the program to load
 	 */
 	public static void loadExecutable(TraceSnapshot snapshot, Program program) {
 		Trace trace = snapshot.getTrace();
-		Address min = null;
-		Address max = null;
+		PathPattern patRegion = computePatternRegion(trace);
+		Map<AddressSpace, Extrema> extremaBySpace = new HashMap<>();
 		try {
 			for (MemoryBlock block : program.getMemory().getBlocks()) {
-				if (!block.isLoaded()) {
-					continue;
-				}
-				if (block.isOverlay()) {
+				if (!DebuggerStaticMappingUtils.isReal(block)) {
 					continue;
 				}
 				AddressRange range = new AddressRangeImpl(block.getStart(), block.getEnd());
-				min = min == null ? range.getMinAddress()
-						: ComparatorMath.cmin(min, range.getMinAddress());
-				max = max == null ? range.getMaxAddress()
-						: ComparatorMath.cmax(max, range.getMaxAddress());
+				extremaBySpace.computeIfAbsent(range.getAddressSpace(), s -> new Extrema())
+						.consider(range);
 				String modName = getModuleName(program);
 
 				// TODO: Do I populate modules, since the mapping will already be done?
+				String path = PathUtils.toString(patRegion
+						.applyKeys(block.getStart() + "-" + modName + ":" + block.getName())
+						.getSingletonPath());
 				trace.getMemoryManager()
-						.createRegion(
-							"Modules[" + modName + "].Sections[" + block.getName() + "]",
-							snapshot.getKey(), range, getRegionFlags(block));
+						.createRegion(path, snapshot.getKey(), range, getRegionFlags(block));
 			}
-			DebuggerStaticMappingUtils.addMapping(
-				new DefaultTraceLocation(trace, null, Range.atLeast(snapshot.getKey()), min),
-				new ProgramLocation(program, min),
-				max.subtract(min), false);
+			for (Extrema extrema : extremaBySpace.values()) {
+				DebuggerStaticMappingUtils.addMapping(
+					new DefaultTraceLocation(trace, null, Lifespan.nowOn(snapshot.getKey()),
+						extrema.getMin()),
+					new ProgramLocation(program, extrema.getMin()), extrema.getLength(), false);
+			}
 		}
 		catch (TraceOverlappedRegionException | DuplicateNameException
 				| TraceConflictedMappingException e) {
 			throw new AssertionError(e);
 		}
 		// N.B. Bytes will be loaded lazily
+	}
+
+	public static PathPattern computePattern(Trace trace, Class<? extends TargetObject> iface) {
+		TargetObjectSchema root = trace.getObjectManager().getRootSchema();
+		if (root == null) {
+			return new PathPattern(PathUtils.parse("Memory[]"));
+		}
+		PathMatcher matcher = root.searchFor(iface, true);
+		PathPattern pattern = matcher.getSingletonPattern();
+		if (pattern == null || pattern.countWildcards() != 1) {
+			throw new IllegalArgumentException(
+				"Cannot find unique " + iface.getSimpleName() + " container");
+		}
+		return pattern;
+	}
+
+	public static PathPattern computePatternRegion(Trace trace) {
+		return computePattern(trace, TargetMemoryRegion.class);
+	}
+
+	public static PathPattern computePatternThread(Trace trace) {
+		return computePattern(trace, TargetThread.class);
 	}
 
 	/**
@@ -181,12 +202,16 @@ public enum ProgramEmulationUtils {
 	 */
 	public static TraceThread spawnThread(Trace trace, long snap) {
 		TraceThreadManager tm = trace.getThreadManager();
+		PathPattern patThread = computePatternThread(trace);
 		long next = tm.getAllThreads().size();
-		while (!tm.getThreadsByPath("Threads[" + next + "]").isEmpty()) {
+		String path;
+		while (!tm.getThreadsByPath(path =
+			PathUtils.toString(patThread.applyKeys(Long.toString(next)).getSingletonPath()))
+				.isEmpty()) {
 			next++;
 		}
 		try {
-			return tm.createThread("Threads[" + next + "]", "[" + next + "]", snap);
+			return tm.createThread(path, "[" + next + "]", snap);
 		}
 		catch (DuplicateNameException e) {
 			throw new AssertionError(e);
@@ -206,30 +231,55 @@ public enum ProgramEmulationUtils {
 	 */
 	public static void initializeRegisters(Trace trace, long snap, TraceThread thread,
 			Program program, Address tracePc, Address programPc, TraceMemoryRegion stack) {
-		TraceMemoryRegisterSpace space =
-			trace.getMemoryManager().getMemoryRegisterSpace(thread, true);
+		TraceMemoryManager memory = trace.getMemoryManager();
+		if (thread instanceof TraceObjectThread ot) {
+			TraceObject object = ot.getObject();
+			PathPredicates regsMatcher = object.getRoot()
+					.getTargetSchema()
+					.searchForRegisterContainer(0, object.getCanonicalPath().getKeyList());
+			if (regsMatcher.isEmpty()) {
+				throw new IllegalArgumentException("Cannot create register container");
+			}
+			for (PathPattern regsPattern : regsMatcher.getPatterns()) {
+				trace.getObjectManager()
+						.createObject(TraceObjectKeyPath.of(regsPattern.getSingletonPath()));
+				break;
+			}
+		}
+		TraceMemorySpace regSpace = memory.getMemoryRegisterSpace(thread, true);
 		if (program != null) {
 			ProgramContext ctx = program.getProgramContext();
 			for (Register reg : Stream.of(ctx.getRegistersWithValues())
 					.map(Register::getBaseRegister)
 					.collect(Collectors.toSet())) {
 				RegisterValue rv = ctx.getRegisterValue(reg, programPc);
-				if (!rv.hasAnyValue()) {
+				if (rv == null || !rv.hasAnyValue()) {
 					continue;
 				}
+				TraceMemoryOperations space =
+					reg.getAddressSpace().isRegisterSpace() ? regSpace : memory;
 				// Set all the mask bits
 				space.setValue(snap, new RegisterValue(reg, BigInteger.ZERO).combineValues(rv));
 			}
 		}
-		space.setValue(snap, new RegisterValue(trace.getBaseLanguage().getProgramCounter(),
-			tracePc.getOffsetAsBigInteger()));
+		Register regPC = trace.getBaseLanguage().getProgramCounter();
+		TraceMemoryOperations spacePC =
+			regPC.getAddressSpace().isRegisterSpace() ? regSpace : memory;
+		spacePC.setValue(snap, new RegisterValue(regPC,
+			NumericUtilities.unsignedLongToBigInteger(tracePc.getAddressableWordOffset())));
 		if (stack != null) {
 			CompilerSpec cSpec = trace.getBaseCompilerSpec();
 			Address sp = cSpec.stackGrowsNegative()
-					? stack.getMaxAddress()
+					? stack.getMaxAddress().addWrap(1)
 					: stack.getMinAddress();
-			space.setValue(snap,
-				new RegisterValue(cSpec.getStackPointer(), sp.getOffsetAsBigInteger()));
+			Register regSP = cSpec.getStackPointer();
+			if (regSP != null) {
+				TraceMemoryOperations spaceSP =
+					regSP.getAddressSpace().isRegisterSpace() ? regSpace : memory;
+				spaceSP.setValue(snap,
+					new RegisterValue(regSP,
+						NumericUtilities.unsignedLongToBigInteger(sp.getAddressableWordOffset())));
+			}
 		}
 	}
 
@@ -251,11 +301,18 @@ public enum ProgramEmulationUtils {
 		TraceMemoryManager mm = trace.getMemoryManager();
 		AddressSetView left =
 			new DifferenceAddressSetView(except0, mm.getRegionsAddressSet(snap));
+		PathPattern patRegion = computePatternRegion(trace);
 		try {
 			for (AddressRange candidate : left) {
 				if (Long.compareUnsigned(candidate.getLength(), size) > 0) {
 					AddressRange alloc = new AddressRangeImpl(candidate.getMinAddress(), size);
-					return mm.createRegion(thread.getPath() + ".Stack", snap, alloc,
+					String threadName = PathUtils.isIndex(thread.getName())
+							? PathUtils.parseIndex(thread.getName())
+							: thread.getName();
+					String path = PathUtils.toString(
+						patRegion.applyKeys(alloc.getMinAddress() + "-stack " + threadName)
+								.getSingletonPath());
+					return mm.createRegion(path, snap, alloc,
 						TraceMemoryFlag.READ, TraceMemoryFlag.WRITE);
 				}
 			}
@@ -282,13 +339,12 @@ public enum ProgramEmulationUtils {
 		boolean success = false;
 		try {
 			trace = new DBTrace(getTraceName(program), program.getCompilerSpec(), consumer);
-			try (UndoableTransaction tid = UndoableTransaction.start(trace, "Emulate", false)) {
+			try (UndoableTransaction tid = UndoableTransaction.start(trace, "Emulate")) {
 				TraceSnapshot initial =
 					trace.getTimeManager().createSnapshot(EMULATION_STARTED_AT + pc);
 				long snap = initial.getKey();
 				loadExecutable(initial, program);
 				doLaunchEmulationThread(trace, snap, program, pc, pc);
-				tid.commit();
 			}
 			success = true;
 			return trace;
@@ -328,9 +384,8 @@ public enum ProgramEmulationUtils {
 	public static TraceThread launchEmulationThread(Trace trace, long snap, Program program,
 			Address tracePc, Address programPc) {
 		try (UndoableTransaction tid =
-			UndoableTransaction.start(trace, "Emulate new Thread", false)) {
+			UndoableTransaction.start(trace, "Emulate new Thread")) {
 			TraceThread thread = doLaunchEmulationThread(trace, snap, program, tracePc, programPc);
-			tid.commit();
 			return thread;
 		}
 	}

@@ -24,12 +24,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.google.common.collect.RangeSet;
-
 import agent.gdb.manager.*;
+import agent.gdb.manager.GdbCause.Causes;
 import agent.gdb.manager.GdbManager.StepCmd;
 import agent.gdb.manager.impl.cmd.*;
-import ghidra.async.AsyncLazyValue;
+import agent.gdb.manager.impl.cmd.GdbConsoleExecCommand.CompletesWithRunning;
+import generic.ULongSpan.ULongSpanSet;
 import ghidra.lifecycle.Internal;
 import ghidra.util.Msg;
 
@@ -37,14 +37,24 @@ import ghidra.util.Msg;
  * The implementation of {@link GdbInferior}
  */
 public class GdbInferiorImpl implements GdbInferior {
-	protected static final Pattern MEMORY_MAPPING_LINE_PATTERN = Pattern.compile("\\s*" + //
-		"0x(?<start>[0-9,A-F,a-f]+)\\s+" + //
-		"0x(?<end>[0-9,A-F,a-f]+)\\s+" + //
-		"0x(?<size>[0-9,A-F,a-f]+)\\s+" + //
-		"0x(?<offset>[0-9,A-F,a-f]+)\\s*" + //
-		"(?<file>\\S*)\\s*");
+	protected static final Pattern MEMORY_MAPPING_WOUT_FLAGS_LINE_PATTERN =
+		Pattern.compile("\\s*" +
+			"0x(?<start>[0-9,A-F,a-f]+)\\s+" +
+			"0x(?<end>[0-9,A-F,a-f]+)\\s+" +
+			"0x(?<size>[0-9,A-F,a-f]+)\\s+" +
+			"0x(?<offset>[0-9,A-F,a-f]+)\\s+" +
+			"(?<file>\\S*)\\s*");
 
-	private final GdbManagerImpl manager;
+	protected static final Pattern MEMORY_MAPPING_LINE_PATTERN =
+		Pattern.compile("\\s*" + //
+			"0x(?<start>[0-9,A-F,a-f]+)\\s+" +
+			"0x(?<end>[0-9,A-F,a-f]+)\\s+" +
+			"0x(?<size>[0-9,A-F,a-f]+)\\s+" +
+			"0x(?<offset>[0-9,A-F,a-f]+)\\s+" +
+			"(?<flags>[rwsxp\\-]+)\\s+" +
+			"(?<file>\\S*)\\s*");
+
+	protected final GdbManagerImpl manager;
 	private final int id;
 
 	private Long pid; // Not always present
@@ -59,9 +69,6 @@ public class GdbInferiorImpl implements GdbInferior {
 
 	private final Map<String, GdbModuleImpl> modules = new LinkedHashMap<>();
 	private final Map<String, GdbModule> unmodifiableModules = Collections.unmodifiableMap(modules);
-
-	// Because asking GDB to list sections lists those of all modules
-	protected final AsyncLazyValue<Void> loadSections = new AsyncLazyValue<>(this::doLoadSections);
 
 	private final NavigableMap<BigInteger, GdbMemoryMapping> mappings = new TreeMap<>();
 	private final NavigableMap<BigInteger, GdbMemoryMapping> unmodifiableMappings =
@@ -84,9 +91,15 @@ public class GdbInferiorImpl implements GdbInferior {
 	}
 
 	public void update(GdbInferiorThreadGroup g) {
+		Long oldPid = pid;
 		this.pid = g.getPid();
 		this.exitCode = g.getExitCode();
 		this.executable = g.getExecutable();
+
+		// Because we're only called to resync, we should synth started, if needed
+		if (oldPid == null && pid != null) {
+			manager.fireInferiorStarted(this, Causes.UNCLAIMED, "resyncInferiorStarted");
+		}
 	}
 
 	@Override
@@ -223,19 +236,15 @@ public class GdbInferiorImpl implements GdbInferior {
 
 	@Override
 	public CompletableFuture<Map<String, GdbModule>> listModules() {
-		// "nosections" is an unlikely section name. Goal is to exclude section lines.
-		// TODO: See how this behaves on other GDB versions.
-		return consoleCapture("maintenance info sections ALLOBJ nosections")
-				.thenApply(this::parseModuleNames);
-	}
-
-	protected CompletableFuture<Void> loadSections() {
-		return loadSections.request();
+		return manager.execMaintInfoSectionsAllObjects(this).thenApply(lines -> {
+			return parseModuleNames(lines);
+		});
 	}
 
 	protected CompletableFuture<Void> doLoadSections() {
-		return consoleCapture("maintenance info sections ALLOBJ")
-				.thenAccept(this::parseAndUpdateAllModuleSections);
+		return manager.execMaintInfoSectionsAllObjects(this).thenAccept(lines -> {
+			parseAndUpdateAllModuleSections(lines);
+		});
 	}
 
 	protected GdbModuleImpl resyncCreateModule(String name) {
@@ -268,16 +277,27 @@ public class GdbInferiorImpl implements GdbInferior {
 		}
 	}
 
-	protected void parseAndUpdateAllModuleSections(String out) {
+	protected String nameFromLine(String line) {
+		Matcher nameMatcher = manager.matchFileLine(line);
+		if (nameMatcher == null) {
+			return null;
+		}
+		String name = nameMatcher.group("name");
+		if (name.startsWith(GdbModuleImpl.GNU_DEBUGDATA_PREFIX)) {
+			return null;
+		}
+		return name;
+	}
+
+	protected void parseAndUpdateAllModuleSections(String[] lines) {
 		Set<String> namesSeen = new HashSet<>();
 		GdbModuleImpl curModule = null;
-		for (String line : out.split("\n")) {
-			Matcher nameMatcher = GdbModuleImpl.OBJECT_FILE_LINE_PATTERN.matcher(line);
-			if (nameMatcher.matches()) {
+		for (String line : lines) {
+			String name = nameFromLine(line);
+			if (name != null) {
 				if (curModule != null) {
 					curModule.loadSections.provide().complete(null);
 				}
-				String name = nameMatcher.group("name");
 				namesSeen.add(name);
 				curModule = modules.computeIfAbsent(name, this::resyncCreateModule);
 				// NOTE: This will usurp the module's lazy loader, but we're about to
@@ -298,12 +318,11 @@ public class GdbInferiorImpl implements GdbInferior {
 		resyncRetainModules(namesSeen);
 	}
 
-	protected Map<String, GdbModule> parseModuleNames(String out) {
+	protected Map<String, GdbModule> parseModuleNames(String[] lines) {
 		Set<String> namesSeen = new HashSet<>();
-		for (String line : out.split("\n")) {
-			Matcher nameMatcher = GdbModuleImpl.OBJECT_FILE_LINE_PATTERN.matcher(line);
-			if (nameMatcher.matches()) {
-				String name = nameMatcher.group("name");
+		for (String line : lines) {
+			String name = nameFromLine(line);
+			if (name != null) {
 				namesSeen.add(name);
 				modules.computeIfAbsent(name, this::resyncCreateModule);
 			}
@@ -319,24 +338,51 @@ public class GdbInferiorImpl implements GdbInferior {
 
 	@Override
 	public CompletableFuture<Map<BigInteger, GdbMemoryMapping>> listMappings() {
-		return consoleCapture("info proc mappings").thenApply(this::parseMappings);
+		return consoleCapture("info proc mappings", CompletesWithRunning.CANNOT)
+				.thenApply(this::parseMappings);
+	}
+
+	protected GdbMemoryMapping parseMappingLine(String line) throws NumberFormatException {
+		Matcher mappingMatcher = MEMORY_MAPPING_LINE_PATTERN.matcher(line);
+		if (!mappingMatcher.matches()) {
+			return null;
+		}
+		BigInteger start = new BigInteger(mappingMatcher.group("start"), 16);
+		BigInteger end = new BigInteger(mappingMatcher.group("end"), 16);
+		BigInteger size = new BigInteger(mappingMatcher.group("size"), 16);
+		BigInteger offset = new BigInteger(mappingMatcher.group("offset"), 16);
+		String flags = mappingMatcher.group("flags");
+		String objfile = mappingMatcher.group("file");
+		return new GdbMemoryMapping(start, end, size, offset, flags, objfile);
+	}
+
+	protected GdbMemoryMapping parseMappingsLineWOutFlags(String line)
+			throws NumberFormatException {
+		Matcher mappingMatcher = MEMORY_MAPPING_WOUT_FLAGS_LINE_PATTERN.matcher(line);
+		if (!mappingMatcher.matches()) {
+			return null;
+		}
+		BigInteger start = new BigInteger(mappingMatcher.group("start"), 16);
+		BigInteger end = new BigInteger(mappingMatcher.group("end"), 16);
+		BigInteger size = new BigInteger(mappingMatcher.group("size"), 16);
+		BigInteger offset = new BigInteger(mappingMatcher.group("offset"), 16);
+		String objfile = mappingMatcher.group("file");
+		return new GdbMemoryMapping(start, end, size, offset, "rwx", objfile);
 	}
 
 	protected Map<BigInteger, GdbMemoryMapping> parseMappings(String out) {
 		Set<BigInteger> startsSeen = new TreeSet<>();
 		for (String line : out.split("\n")) {
-			Matcher mappingMatcher = MEMORY_MAPPING_LINE_PATTERN.matcher(line);
-			if (!mappingMatcher.matches()) {
-				continue;
-			}
 			try {
-				BigInteger start = new BigInteger(mappingMatcher.group("start"), 16);
-				BigInteger end = new BigInteger(mappingMatcher.group("end"), 16);
-				BigInteger size = new BigInteger(mappingMatcher.group("size"), 16);
-				BigInteger offset = new BigInteger(mappingMatcher.group("offset"), 16);
-				String objfile = mappingMatcher.group("file");
-				startsSeen.add(start);
-				mappings.put(start, new GdbMemoryMapping(start, end, size, offset, objfile));
+				GdbMemoryMapping mapping = parseMappingLine(line);
+				if (mapping == null) {
+					mapping = parseMappingsLineWOutFlags(line);
+				}
+				if (mapping == null) { // still, so it matches neither pattern
+					continue; // It's just a throw-away line, or the format changed again.
+				}
+				startsSeen.add(mapping.getStart());
+				mappings.put(mapping.getStart(), mapping);
 			}
 			catch (NumberFormatException e) {
 				Msg.error(this, "Could not parse mapping entry: " + line, e);
@@ -377,15 +423,15 @@ public class GdbInferiorImpl implements GdbInferior {
 	}
 
 	@Override
-	public CompletableFuture<Void> console(String command) {
+	public CompletableFuture<Void> console(String command, CompletesWithRunning cwr) {
 		return execute(new GdbConsoleExecCommand(manager, null, null, command,
-			GdbConsoleExecCommand.Output.CONSOLE)).thenApply(e -> null);
+			GdbConsoleExecCommand.Output.CONSOLE, cwr)).thenApply(e -> null);
 	}
 
 	@Override
-	public CompletableFuture<String> consoleCapture(String command) {
+	public CompletableFuture<String> consoleCapture(String command, CompletesWithRunning cwr) {
 		return execute(new GdbConsoleExecCommand(manager, null, null, command,
-			GdbConsoleExecCommand.Output.CAPTURE));
+			GdbConsoleExecCommand.Output.CAPTURE, cwr));
 	}
 
 	@Override
@@ -433,7 +479,7 @@ public class GdbInferiorImpl implements GdbInferior {
 	}
 
 	@Override
-	public CompletableFuture<RangeSet<Long>> readMemory(long addr, ByteBuffer buf, int len) {
+	public CompletableFuture<ULongSpanSet> readMemory(long addr, ByteBuffer buf, int len) {
 		return execute(new GdbReadMemoryCommand(manager, null, addr, buf, len));
 	}
 
@@ -457,7 +503,7 @@ public class GdbInferiorImpl implements GdbInferior {
 
 	@Internal
 	public CompletableFuture<Void> syncEndianness() {
-		return consoleCapture("show endian").thenAccept(out -> {
+		return consoleCapture("show endian", CompletesWithRunning.CANNOT).thenAccept(out -> {
 			if (out.toLowerCase().contains("little endian")) {
 				endianness = ByteOrder.LITTLE_ENDIAN;
 			}

@@ -18,6 +18,7 @@ package ghidra.app.plugin.core.analysis;
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.Stack;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 
 import javax.swing.JFrame;
@@ -132,7 +133,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 
 	private MessageLog log = new MessageLog();
 
-	private List<AutoAnalysisManagerListener> listeners = new ArrayList<>();
+	private List<AutoAnalysisManagerListener> listeners = new CopyOnWriteArrayList<>();
 
 	private EventQueueID eventQueueID;
 
@@ -577,7 +578,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 		Integer originalPriority = activeTask.taskPriority;
 		activeTask.taskPriority = limitPriority;
 		try {
-			yield(limitPriority, monitor);
+			this.yield(limitPriority, monitor);
 		}
 		finally {
 			activeTask.taskPriority = originalPriority;
@@ -652,7 +653,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 			//    Thinking was that if some analysis causes disassembly to occur,
 			//    then that disassembly and it's analysis will keep other analysis out of trouble.
 			//    However for single threaded, this might not be worthwhile in the long run.
-			yield(activeTask.taskPriority, monitor);
+			this.yield(activeTask.taskPriority, monitor);
 		}
 		else if (analysisThread != null || !isEnabled) {
 			// this could be a sub-thread of a task, don't yield, or flush domain objects
@@ -850,6 +851,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 		for (AnalysisTaskList list : taskArray) {
 			list.notifyAnalysisEnded(program);
 		}
+
 		for (AutoAnalysisManagerListener listener : listeners) {
 			listener.analysisEnded(this);
 		}
@@ -1099,24 +1101,17 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 	}
 
 	boolean askToAnalyze(PluginTool tool) {
-		if (program == null) {
-			return false;
-		}
-		//if program has just been instantiated, then we can analyze it.
-		if (!program.canSave() && !program.isChanged()) {
-			return false;
-		}
+		// This code relies on being called in the swing thread to avoid a race condition
+		// where multiple threads check the flag before either thread has a chance to set it.
+		Swing.assertSwingThread("Asking to analyze must be on the swing thread!");
+
 		if (GhidraProgramUtilities.shouldAskToAnalyze(program)) {
+			// initialize the analyzed flag to a non-null value to indicate we at least asked
+			GhidraProgramUtilities.setAnalyzedFlag(program, false);
+
 			int answer = OptionDialog.showYesNoDialog(tool.getToolFrame(), "Analyze",
 				"<html>" + HTMLUtilities.escapeHTML(program.getDomainFile().getName()) +
 					" has not been analyzed. Would you like to analyze it now?");
-			//Set to false for now.  ANALYZED is a tri-valued variable:
-			// null means not asked.
-			// false means asked but could still turn true when analysis happens.
-			// true means analysis has started.
-			//Setting false here only works due to this code only being reachable
-			// because of the behavior of GhidraProgramUtilities.shouldAskToAnalyze(program) above.
-			GhidraProgramUtilities.setAnalyzedFlag(program, false);
 			return answer == OptionDialog.OPTION_ONE; //Analyze
 		}
 		return false;
@@ -1275,13 +1270,13 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 			if (testLen > spacer.length()) {
 				testLen = spacer.length() - 5;
 			}
-			taskTimesStringBuf.append(
-				"    " + element + spacer.substring(testLen) + secString + "\n");
+			taskTimesStringBuf
+					.append("    " + element + spacer.substring(testLen) + secString + "\n");
 		}
 
 		taskTimesStringBuf.append("-----------------------------------------------------\n");
-		taskTimesStringBuf.append(
-			"     Total Time   " + (int) (totalTaskTime / 1000.00) + " secs\n");
+		taskTimesStringBuf
+				.append("     Total Time   " + (int) (totalTaskTime / 1000.00) + " secs\n");
 		taskTimesStringBuf.append("-----------------------------------------------------\n");
 
 		return taskTimesStringBuf.toString();
@@ -1297,6 +1292,11 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 	}
 
 	private void saveTaskTimes() {
+
+		Program p = program; // program may get cleared by domain object change event
+		if (p == null || p.isClosed()) {
+			return;
+		}
 
 		StoredAnalyzerTimes times = StoredAnalyzerTimes.getStoredAnalyzerTimes(program);
 

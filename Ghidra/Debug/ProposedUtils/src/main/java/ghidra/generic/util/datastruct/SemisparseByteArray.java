@@ -17,11 +17,13 @@ package ghidra.generic.util.datastruct;
 
 import java.nio.BufferOverflowException;
 import java.nio.BufferUnderflowException;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
 
-import com.google.common.collect.*;
-import com.google.common.primitives.UnsignedLong;
+import generic.ULongSpan;
+import generic.ULongSpan.*;
+import ghidra.util.MathUtilities;
 
 /**
  * A sparse byte array characterized by contiguous dense regions
@@ -61,8 +63,33 @@ public class SemisparseByteArray {
 	/** The size of blocks used internally to store array values */
 	public static final int BLOCK_SIZE = 0x1000;
 
-	private final Map<Long, byte[]> blocks = new HashMap<>();
-	private final RangeSet<UnsignedLong> defined = TreeRangeSet.create();
+	private final Map<Long, byte[]> blocks;
+	private final MutableULongSpanSet defined;
+
+	public SemisparseByteArray() {
+		this.blocks = new HashMap<>();
+		this.defined = new DefaultULongSpanSet();
+	}
+
+	protected SemisparseByteArray(Map<Long, byte[]> blocks, MutableULongSpanSet defined) {
+		this.blocks = blocks;
+		this.defined = defined;
+	}
+
+	static byte[] copyArr(Map.Entry<?, byte[]> ent) {
+		byte[] b = ent.getValue();
+		return Arrays.copyOf(b, b.length);
+	}
+
+	public synchronized SemisparseByteArray fork() {
+		// TODO Could use some copy-on-write optimization here and in parents
+		Map<Long, byte[]> copyBlocks = blocks.entrySet()
+				.stream()
+				.collect(Collectors.toMap(Entry::getKey, SemisparseByteArray::copyArr));
+		MutableULongSpanSet copyDefined = new DefaultULongSpanSet();
+		copyDefined.addAll(defined);
+		return new SemisparseByteArray(copyBlocks, copyDefined);
+	}
 
 	/**
 	 * Clear the array
@@ -137,32 +164,33 @@ public class SemisparseByteArray {
 	 * Enumerate the initialized ranges within the given range
 	 * 
 	 * <p>
-	 * The given range is interpreted as closed-open, i.e., [a, b).
+	 * The given range is interpreted as closed, i.e., [a, b].
 	 * 
 	 * @param a the lower-bound, inclusive, of the range
-	 * @param b the upper-bound, exclusive, of the range
+	 * @param b the upper-bound, inclusive, of the range
 	 * @return the set of initialized ranges
 	 */
-	public synchronized RangeSet<UnsignedLong> getInitialized(long a, long b) {
-		UnsignedLong ua = UnsignedLong.fromLongBits(a);
-		UnsignedLong ub = UnsignedLong.fromLongBits(b);
-		return ImmutableRangeSet.copyOf(defined.subRangeSet(Range.closedOpen(ua, ub)));
+	public synchronized ULongSpanSet getInitialized(long a, long b) {
+		MutableULongSpanSet result = new DefaultULongSpanSet();
+		ULongSpan query = ULongSpan.span(a, b);
+		for (ULongSpan span : defined.intersecting(query)) {
+			result.add(query.intersect(span));
+		}
+		return result;
 	}
 
 	/**
 	 * Check if a range is completely initialized
 	 * 
 	 * <p>
-	 * The given range is interpreted as closed-open, i.e., [a,b).
+	 * The given range is interpreted as closed, i.e., [a, b].
 	 * 
 	 * @param a the lower-bound, inclusive, of the range
-	 * @param b the upper-bound, exclusive, of the range
+	 * @param b the upper-bound, inclusive, of the range
 	 * @return true if all indices in the range are initialized, false otherwise
 	 */
 	public synchronized boolean isInitialized(long a, long b) {
-		UnsignedLong ua = UnsignedLong.fromLongBits(a);
-		UnsignedLong ub = UnsignedLong.fromLongBits(b);
-		return defined.encloses(Range.closedOpen(ua, ub));
+		return defined.encloses(ULongSpan.span(a, b));
 	}
 
 	/**
@@ -172,23 +200,25 @@ public class SemisparseByteArray {
 	 * @return true if the index is initialized, false otherwise
 	 */
 	public synchronized boolean isInitialized(long a) {
-		return defined.contains(UnsignedLong.fromLongBits(a));
+		return defined.contains(a);
 	}
 
 	/**
 	 * Enumerate the uninitialized ranges within the given range
 	 * 
 	 * <p>
-	 * The given range is interpreted as closed-open, i.e., [a, b).
+	 * The given range is interpreted as closed, i.e., [a, b].
 	 * 
 	 * @param a the lower-bound, inclusive, of the range
-	 * @param b the upper-bound, exclusive, of the range
+	 * @param b the upper-bound, inclusive, of the range
 	 * @return the set of uninitialized ranges
 	 */
-	public synchronized RangeSet<UnsignedLong> getUninitialized(long a, long b) {
-		UnsignedLong ua = UnsignedLong.fromLongBits(a);
-		UnsignedLong ub = UnsignedLong.fromLongBits(b);
-		return ImmutableRangeSet.copyOf(defined.complement().subRangeSet(Range.closedOpen(ua, ub)));
+	public synchronized ULongSpanSet getUninitialized(long a, long b) {
+		MutableULongSpanSet result = new DefaultULongSpanSet();
+		for (ULongSpan s : defined.complement(ULongSpan.span(a, b))) {
+			result.add(s);
+		}
+		return result;
 	}
 
 	/**
@@ -212,12 +242,10 @@ public class SemisparseByteArray {
 	 */
 	public synchronized void putData(final long loc, final byte[] data, final int offset,
 			final int length) {
-		if (length < 0) {
-			throw new IllegalArgumentException("length: " + length);
+		if (length == 0) {
+			return;
 		}
-		UnsignedLong uLoc = UnsignedLong.fromLongBits(loc);
-		UnsignedLong uEnd = UnsignedLong.fromLongBits(loc + length);
-		defined.add(Range.closedOpen(uLoc, uEnd));
+		defined.add(ULongSpan.extent(loc, length));
 
 		// Write out portion of first block (could be full block)
 		long blockNum = Long.divideUnsigned(loc, BLOCK_SIZE);
@@ -241,21 +269,36 @@ public class SemisparseByteArray {
 	}
 
 	/**
+	 * Copy the contents on another semisparse array into this one
+	 * 
+	 * @param from the source array
+	 */
+	public synchronized void putAll(SemisparseByteArray from) {
+		byte[] temp = new byte[4096];
+		for (ULongSpan span : from.defined.spans()) {
+			long lower = span.min();
+			long length = span.length();
+			for (long i = 0; Long.compareUnsigned(i, length) < 0;) {
+				int l = MathUtilities.unsignedMin(temp.length, length - i);
+				from.getData(lower + i, temp, 0, l);
+				this.putData(lower + i, temp, 0, l);
+				i += l;
+			}
+		}
+	}
+
+	/**
 	 * Check how many contiguous bytes are available starting at the given address
 	 * 
 	 * @param loc the starting offset
 	 * @return the number of contiguous defined bytes following
 	 */
 	public synchronized int contiguousAvailableAfter(long loc) {
-		UnsignedLong uLoc = UnsignedLong.fromLongBits(loc);
-		Range<UnsignedLong> rng = defined.rangeContaining(uLoc);
-		if (rng == null) {
+		ULongSpan span = defined.spanContaining(loc);
+		if (span == null) {
 			return 0;
 		}
-		UnsignedLong diff = rng.upperEndpoint().minus(uLoc);
-		if (diff.compareTo(UnsignedLong.valueOf(Integer.MAX_VALUE)) >= 0) {
-			return Integer.MAX_VALUE;
-		}
-		return diff.intValue();
+		long diff = span.max() - loc + 1;
+		return MathUtilities.unsignedMin(Integer.MAX_VALUE, diff);
 	}
 }

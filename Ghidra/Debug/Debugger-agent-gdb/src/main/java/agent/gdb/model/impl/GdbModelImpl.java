@@ -61,6 +61,7 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 
 	protected final GdbManager gdb;
 	protected final GdbModelTargetSession session;
+	private volatile boolean closed;
 
 	protected final CompletableFuture<GdbModelTargetSession> completedSession;
 	protected final GdbStateListener gdbExitListener = this::checkExited;
@@ -111,7 +112,6 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 				break;
 			}
 			case RUNNING: {
-				session.invalidateMemoryAndRegisterCaches();
 				session.setAccessible(false);
 				break;
 			}
@@ -131,15 +131,35 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 		}
 	}
 
+	public void setUnixNewLine() {
+		gdb.setUnixNewLine();
+	}
+
+	public void setDosNewLine() {
+		gdb.setDosNewLine();
+	}
+
 	public CompletableFuture<Void> startGDB(String gdbCmd, String[] args) {
-		try {
-			gdb.start(gdbCmd, args);
+		return CompletableFuture.runAsync(() -> {
+			try {
+				if (closed) {
+					return;
+				}
+				gdb.start(gdbCmd, args);
+			}
+			catch (IOException e) {
+				if (closed) {
+					return;
+				}
+				throw new DebuggerModelTerminatingException(
+					"Error while starting GDB: " + e.getMessage(), e);
+			}
+		}).thenCompose(__ -> {
+			if (closed) {
+				return AsyncUtils.NIL;
+			}
 			return gdb.runRC();
-		}
-		catch (IOException e) {
-			return CompletableFuture.failedFuture(
-				new DebuggerModelTerminatingException("Error while starting GDB", e));
-		}
+		});
 	}
 
 	public void consoleLoop() throws IOException {
@@ -164,6 +184,7 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 
 	@Override
 	public CompletableFuture<Void> close() {
+		closed = true;
 		try {
 			terminate();
 			return super.close();

@@ -32,30 +32,30 @@ import ghidra.util.exception.*;
  * This version introduces the concept of sub memory blocks and FileBytes
  */
 public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
-	public static final int V3_VERSION = 3;
-	public static final String TABLE_NAME = "Memory Blocks";
-	public static final String SUB_BLOCK_TABLE_NAME = "Sub Memory Blocks";
+	private static final int V3_VERSION = 3;
+	private static final String TABLE_NAME = "Memory Blocks";
+	private static final String SUB_BLOCK_TABLE_NAME = "Sub Memory Blocks";
 
-	public static final int V3_NAME_COL = 0;
-	public static final int V3_COMMENTS_COL = 1;
-	public static final int V3_SOURCE_COL = 2;
-	public static final int V3_PERMISSIONS_COL = 3;
-	public static final int V3_START_ADDR_COL = 4;
-	public static final int V3_LENGTH_COL = 5;
-	public static final int V3_SEGMENT_COL = 6;
+	static final int V3_NAME_COL = 0;
+	static final int V3_COMMENTS_COL = 1;
+	static final int V3_SOURCE_COL = 2;
+	static final int V3_PERMISSIONS_COL = 3;
+	static final int V3_START_ADDR_COL = 4;
+	static final int V3_LENGTH_COL = 5;
+	static final int V3_SEGMENT_COL = 6;
 
-	public static final int V3_SUB_PARENT_ID_COL = 0;
-	public static final int V3_SUB_TYPE_COL = 1;
-	public static final int V3_SUB_LENGTH_COL = 2;
-	public static final int V3_SUB_START_OFFSET_COL = 3;
-	public static final int V3_SUB_INT_DATA1_COL = 4;
-	public static final int V3_SUB_LONG_DATA2_COL = 5;
+	static final int V3_SUB_PARENT_ID_COL = 0;
+	static final int V3_SUB_TYPE_COL = 1;
+	static final int V3_SUB_LENGTH_COL = 2;
+	static final int V3_SUB_START_OFFSET_COL = 3;
+	static final int V3_SUB_INT_DATA1_COL = 4;
+	static final int V3_SUB_LONG_DATA2_COL = 5;
 
-	public static final byte V3_SUB_TYPE_BIT_MAPPED = 0;
-	public static final byte V3_SUB_TYPE_BYTE_MAPPED = 1;
-	public static final byte V3_SUB_TYPE_BUFFER = 2;
-	public static final byte V3_SUB_TYPE_UNITIALIZED = 3;
-	public static final byte V3_SUB_TYPE_FILE_BYTES = 4;
+	static final byte V3_SUB_TYPE_BIT_MAPPED = 0;
+	static final byte V3_SUB_TYPE_BYTE_MAPPED = 1;
+	static final byte V3_SUB_TYPE_BUFFER = 2;
+	static final byte V3_SUB_TYPE_UNINITIALIZED = 3;
+	static final byte V3_SUB_TYPE_FILE_BYTES = 4;
 
 	static Schema V3_BLOCK_SCHEMA = new Schema(V3_VERSION, "Key",
 		new Field[] { StringField.INSTANCE, StringField.INSTANCE, StringField.INSTANCE,
@@ -76,7 +76,7 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 	private MemoryMapDB memMap;
 	private AddressMapDB addrMap;
 
-	private List<MemoryBlockDB> memoryBlocks = new ArrayList<>();
+	private List<MemoryBlockDB> memoryBlocks = new ArrayList<>(); // sorted list of blocks
 	private long maxSubBlockSize;
 
 	public MemoryMapDBAdapterV3(DBHandle handle, MemoryMapDB memMap, long maxSubBlockSize,
@@ -145,6 +145,22 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 		return memoryBlocks;
 	}
 
+	private void cacheNewBlock(MemoryBlockDB newBlock) {
+		int insertionIndex = Collections.binarySearch(memoryBlocks, newBlock);
+		if (insertionIndex >= 0) {  // should not find direct hit
+			throw new AssertException("New memory block collides with existing block");
+		}
+		memoryBlocks.add(-insertionIndex - 1, newBlock);
+	}
+
+	private void removeCachedBlock(MemoryBlockDB deletedBlock) {
+		int index = Collections.binarySearch(memoryBlocks, deletedBlock);
+		if (index < 0) {  // should not find direct hit
+			return;
+		}
+		memoryBlocks.remove(index);
+	}
+
 	@Override
 	MemoryBlockDB createInitializedBlock(String name, Address startAddr, InputStream is,
 			long length, int permissions) throws AddressOverflowException, IOException {
@@ -169,8 +185,7 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 			memBlockTable.putRecord(blockRecord);
 
 			MemoryBlockDB newBlock = new MemoryBlockDB(this, blockRecord, subBlocks);
-			memoryBlocks.add(newBlock);
-			Collections.sort(memoryBlocks);
+			cacheNewBlock(newBlock);
 			return newBlock;
 		}
 		catch (IOCancelledException e) {
@@ -200,7 +215,7 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 		if (initializeBytes) {
 			return createInitializedBlock(name, startAddr, null, length, permissions);
 		}
-		return createUnitializedBlock(name, startAddr, length, permissions);
+		return createUninitializedBlock(name, startAddr, length, permissions);
 	}
 
 	@Override
@@ -219,12 +234,11 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 
 		memBlockTable.putRecord(blockRecord);
 		MemoryBlockDB newBlock = new MemoryBlockDB(this, blockRecord, subBlocks);
-		memoryBlocks.add(newBlock);
-		Collections.sort(memoryBlocks);
+		cacheNewBlock(newBlock);
 		return newBlock;
 	}
 
-	MemoryBlockDB createUnitializedBlock(String name, Address startAddress, long length,
+	MemoryBlockDB createUninitializedBlock(String name, Address startAddress, long length,
 			int permissions) throws IOException, AddressOverflowException {
 		updateAddressMapForAllAddresses(startAddress, length);
 
@@ -232,13 +246,12 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 		DBRecord blockRecord = createMemoryBlockRecord(name, startAddress, length, permissions);
 		long key = blockRecord.getKey();
 
-		DBRecord subRecord = createSubBlockRecord(key, 0, length, V3_SUB_TYPE_UNITIALIZED, 0, 0);
+		DBRecord subRecord = createSubBlockRecord(key, 0, length, V3_SUB_TYPE_UNINITIALIZED, 0, 0);
 		subBlocks.add(new UninitializedSubMemoryBlock(this, subRecord));
 
 		memBlockTable.putRecord(blockRecord);
 		MemoryBlockDB newBlock = new MemoryBlockDB(this, blockRecord, subBlocks);
-		memoryBlocks.add(newBlock);
-		Collections.sort(memoryBlocks);
+		cacheNewBlock(newBlock);
 		return newBlock;
 	}
 
@@ -256,11 +269,7 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 
 		memBlockTable.putRecord(blockRecord);
 		MemoryBlockDB newBlock = new MemoryBlockDB(this, blockRecord, splitBlocks);
-		int insertionIndex = Collections.binarySearch(memoryBlocks, newBlock);
-		if (insertionIndex >= 0) {  // should not find direct hit
-			throw new AssertException("New memory block collides with existing block");
-		}
-		memoryBlocks.add(-insertionIndex - 1, newBlock);
+		cacheNewBlock(newBlock);
 		return newBlock;
 	}
 
@@ -293,8 +302,7 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 
 		memBlockTable.putRecord(blockRecord);
 		MemoryBlockDB newBlock = new MemoryBlockDB(this, blockRecord, subBlocks);
-		memoryBlocks.add(newBlock);
-		Collections.sort(memoryBlocks);
+		cacheNewBlock(newBlock);
 		return newBlock;
 	}
 
@@ -314,14 +322,14 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 
 		memBlockTable.putRecord(blockRecord);
 		MemoryBlockDB newBlock = new MemoryBlockDB(this, blockRecord, subBlocks);
-		memoryBlocks.add(newBlock);
-		Collections.sort(memoryBlocks);
+		cacheNewBlock(newBlock);
 		return newBlock;
 	}
 
 	@Override
-	void deleteMemoryBlock(long key) throws IOException {
-		memBlockTable.deleteRecord(key);
+	void deleteMemoryBlock(MemoryBlockDB block) throws IOException {
+		removeCachedBlock(block);
+		memBlockTable.deleteRecord(block.getID());
 	}
 
 	@Override
@@ -412,7 +420,7 @@ public class MemoryMapDBAdapterV3 extends MemoryMapDBAdapter {
 				return new ByteMappedSubMemoryBlock(this, record);
 			case V3_SUB_TYPE_BUFFER:
 				return new BufferSubMemoryBlock(this, record);
-			case V3_SUB_TYPE_UNITIALIZED:
+			case V3_SUB_TYPE_UNINITIALIZED:
 				return new UninitializedSubMemoryBlock(this, record);
 			case V3_SUB_TYPE_FILE_BYTES:
 				return new FileBytesSubMemoryBlock(this, record);

@@ -19,6 +19,7 @@
 import java.util.ArrayList;
 import java.util.List;
 
+import generic.theme.GThemeDefaults.Colors.Palette;
 import ghidra.app.script.GhidraScript;
 import ghidra.app.services.GraphDisplayBroker;
 import ghidra.framework.plugintool.PluginTool;
@@ -29,7 +30,13 @@ import ghidra.util.task.TaskMonitor;
 
 public class GraphClassesScript extends GhidraScript {
 
-	List<Structure> classStructures = new ArrayList<Structure>();
+	private static final String NO_INHERITANCE = "No Inheritance";
+	private static final String SINGLE_INHERITANCE = "Single Inheritance";
+	private static final String MULTIPLE_INHERITANCE = "Multiple Inheritance";
+	private static final String VIRTUAL_INHERITANCE = "Virtual Inheritance";
+	private static final String NON_VIRTUAL_INHERITANCE = "Non-virtual Inheritance";
+
+	List<Structure> classStructures = new ArrayList<>();
 
 	@Override
 	public void run() throws Exception {
@@ -100,14 +107,21 @@ public class GraphClassesScript extends GhidraScript {
 	}
 
 	/**
-	 * Method to create a graph using preconfigured information found in class structure descriptions. 
-	 * The structure descriptions are created using 
-	 * {@link RecoveredClassUtils#createParentStringBuffer(RecoveredClass)}
+	 * Method to create a graph using pre-configured information found in class structure 
+	 * descriptions.
 	 * @return the newly created graph
 	 */
 	private AttributedGraph createGraph() throws Exception {
 
-		AttributedGraph g = new AttributedGraph("Test Graph", new EmptyGraphType());
+		GraphType graphType =
+			new GraphTypeBuilder("Class Hierarchy Graph").vertexType(NO_INHERITANCE)
+					.vertexType(SINGLE_INHERITANCE)
+					.vertexType(MULTIPLE_INHERITANCE)
+					.edgeType(NON_VIRTUAL_INHERITANCE)
+					.edgeType(VIRTUAL_INHERITANCE)
+					.build();
+
+		AttributedGraph g = new AttributedGraph("Recovered Classes Graph", graphType);
 
 		for (Structure classStructure : classStructures) {
 
@@ -176,24 +190,27 @@ public class GraphClassesScript extends GhidraScript {
 
 				AttributedEdge edge = g.addEdge(parentVertex, classVertex);
 				if (isVirtualParent) {
-					edge.setAttribute("Color", "Orange");
+					edge.setEdgeType(VIRTUAL_INHERITANCE);
 				}
-				// else leave it default lime green
+				else {
+					// else leave it default lime green
+					edge.setEdgeType(NON_VIRTUAL_INHERITANCE);
+				}
 
 				description = removeClassSubstring(description, parentName);
 			}
 
 			// no parent = blue vertex
 			if (numParents == 0) {
-				classVertex.setAttribute("Color", "Blue");
+				classVertex.setVertexType(NO_INHERITANCE);
 			}
 			// single parent = green vertex
 			else if (numParents == 1) {
-				classVertex.setAttribute("Color", "Green");
+				classVertex.setVertexType(SINGLE_INHERITANCE);
 			}
 			// multiple parents = red vertex
 			else {
-				classVertex.setAttribute("Color", "Red");
+				classVertex.setVertexType(MULTIPLE_INHERITANCE);
 			}
 		}
 
@@ -272,7 +289,7 @@ public class GraphClassesScript extends GhidraScript {
 	private Structure getParentStructureFromClassStructures(String parentName)
 			throws CancelledException {
 
-		List<Structure> parentStructures = new ArrayList<Structure>();
+		List<Structure> parentStructures = new ArrayList<>();
 		for (Structure classStructure : classStructures) {
 			monitor.checkCanceled();
 
@@ -295,9 +312,22 @@ public class GraphClassesScript extends GhidraScript {
 		GraphDisplayBroker broker = tool.getService(GraphDisplayBroker.class);
 		GraphDisplayProvider service = broker.getGraphDisplayProvider("Default Graph Display");
 		display = service.getGraphDisplay(false, TaskMonitor.DUMMY);
-		display.setGraph(graph, "test graph", false, TaskMonitor.DUMMY);
-	}
 
+		GraphDisplayOptions graphOptions = new GraphDisplayOptionsBuilder(graph.getGraphType())
+				.vertex(NO_INHERITANCE, VertexShape.RECTANGLE, Palette.BLUE)
+				.vertex(SINGLE_INHERITANCE, VertexShape.RECTANGLE, Palette.GREEN)
+				.vertex(MULTIPLE_INHERITANCE, VertexShape.RECTANGLE, Palette.RED)
+				.edge(NON_VIRTUAL_INHERITANCE, Palette.LIME)
+				.edge(VIRTUAL_INHERITANCE, Palette.ORANGE)
+				.defaultVertexColor(Palette.PURPLE)
+				.defaultEdgeColor(Palette.PURPLE)
+				.defaultLayoutAlgorithm("Compact Hierarchical")
+				.maxNodeCount(1000)
+				.build();
+
+		display.setGraph(graph, graphOptions,
+			"Recovered Classes Graph", false, TaskMonitor.DUMMY);
+	}
 
 	private String getClassName(String description) {
 

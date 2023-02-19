@@ -15,7 +15,6 @@
  */
 package agent.dbgeng.manager.impl;
 
-import static agent.dbgeng.testutil.DummyProc.runProc;
 import static ghidra.async.AsyncUtils.sequence;
 import static org.junit.Assert.*;
 
@@ -31,16 +30,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.commons.lang3.tuple.Pair;
 import org.junit.*;
 
-import com.google.common.collect.*;
-
 import agent.dbgeng.dbgeng.DbgEngTest;
 import agent.dbgeng.dbgeng.DebugProcessId;
 import agent.dbgeng.manager.*;
 import agent.dbgeng.manager.DbgManager.ExecSuffix;
 import agent.dbgeng.manager.breakpoint.DbgBreakpointInfo;
-import agent.dbgeng.testutil.DummyProc;
+import generic.ULongSpan;
+import generic.ULongSpan.ULongSpanSet;
 import ghidra.async.AsyncFence;
 import ghidra.async.TypeSpec;
+import ghidra.dbg.testutil.DummyProc;
 import ghidra.test.AbstractGhidraHeadlessIntegrationTest;
 import ghidra.util.Msg;
 
@@ -188,7 +187,7 @@ public abstract class AbstractDbgManagerTest extends AbstractGhidraHeadlessInteg
 
 	@Test
 	public void testAttachDetach() throws Throwable {
-		try (DummyProc echo = runProc("dd"); DbgManager mgr = DbgManager.newInstance()) {
+		try (DummyProc echo = DummyProc.run("dd"); DbgManager mgr = DbgManager.newInstance()) {
 			AtomicReference<Set<DbgThread>> threads = new AtomicReference<>();
 			waitOn(sequence(TypeSpec.VOID).then(seq -> {
 				startManager(mgr).handle(seq::next);
@@ -321,11 +320,10 @@ public abstract class AbstractDbgManagerTest extends AbstractGhidraHeadlessInteg
 				thread.get().writeMemory(addr.get(), buf).handle(seq::next);
 			}).then(seq -> {
 				thread.get().readMemory(addr.get(), rBuf).handle(seq::next);
-			}, TypeSpec.obj((RangeSet<Long>) null)).then((rng, seq) -> {
+			}, TypeSpec.obj((ULongSpanSet) null)).then((rng, seq) -> {
 				rBuf.flip();
 				rBuf.order(ByteOrder.LITTLE_ENDIAN);
-				RangeSet<Long> exp = TreeRangeSet.create();
-				exp.add(Range.closedOpen(addr.get(), addr.get() + 1024));
+				ULongSpanSet exp = ULongSpanSet.of(ULongSpan.extent(addr.get(), 1024));
 				assertEquals(exp, rng);
 				for (int i = 0; i < 10; i++) {
 					assertEquals(i, rBuf.getInt());

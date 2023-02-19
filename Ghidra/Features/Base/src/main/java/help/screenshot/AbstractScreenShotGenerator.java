@@ -15,7 +15,7 @@
  */
 package help.screenshot;
 
-import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.*;
 
 import java.awt.*;
 import java.awt.geom.GeneralPath;
@@ -25,7 +25,6 @@ import java.io.IOException;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Predicate;
 
 import javax.swing.*;
 import javax.swing.table.TableColumn;
@@ -48,6 +47,9 @@ import docking.widgets.table.threaded.ThreadedTableModel;
 import docking.widgets.tree.GTree;
 import generic.jar.ResourceFile;
 import generic.test.AbstractGenericTest;
+import generic.theme.GThemeDefaults.Colors;
+import generic.theme.GThemeDefaults.Colors.Java;
+import generic.theme.GThemeDefaults.Colors.Palette;
 import generic.util.image.ImageUtils;
 import ghidra.app.events.ProgramSelectionPluginEvent;
 import ghidra.app.plugin.core.analysis.AnalysisOptionsDialog;
@@ -77,6 +79,7 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.util.ProgramSelection;
 import ghidra.test.AbstractGhidraHeadedIntegrationTest;
 import ghidra.test.TestEnv;
+import ghidra.util.ColorUtils;
 import ghidra.util.exception.AssertException;
 import resources.ResourceManager;
 
@@ -286,8 +289,8 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	/**
 	 * The same as {@link GhidraScreenShotGenerator#captureIsolatedProvider(Class, int, int)}
 	 * except this method will also capture the containing window.
-	 * 
-	 * @param clazz the provider class 
+	 *
+	 * @param clazz the provider class
 	 * @param width the width of the capture
 	 * @param height the height of the capture
 	 */
@@ -421,7 +424,7 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 				captureComponent(window);
 			}
 		}
-		drawBorder(Color.BLACK);
+		drawBorder(Java.BORDER);
 	}
 
 	public JPopupMenu getPopupMenu() {
@@ -464,10 +467,10 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	}
 
 	/**
-	 * Captures the provider by using a screen shot and not by painting the provider directly 
+	 * Captures the provider by using a screen shot and not by painting the provider directly
 	 * (as does {@link #captureProvider(ComponentProvider)}).  Use this method if you need to
 	 * capture the provider along with any popup windows.
-	 * 
+	 *
 	 * @param provider the provider
 	 */
 	public void captureProviderWithScreenShot(ComponentProvider provider) {
@@ -487,14 +490,14 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	}
 
 	/**
-	 * Captures the window, including decorations.  This will use a {@link Robot} to create a 
+	 * Captures the window, including decorations.  This will use a {@link Robot} to create a
 	 * screen capture, which has the effect of getting all items within the window bounds.  This
 	 * method is needed if you wish to capture child windows, like popups/hovers.
-	 * 
-	 * <P>Other capture methods will not use the screen capture mechanism, but rather will 
-	 * directly render the given component.  In this case, subordinate windows will not be 
+	 *
+	 * <P>Other capture methods will not use the screen capture mechanism, but rather will
+	 * directly render the given component.  In this case, subordinate windows will not be
 	 * captured.  For example, see {@link #captureProvider(Class)}.
-	 * 
+	 *
 	 * @param name the provider's name
 	 */
 	public void captureProviderWindow(String name) {
@@ -504,14 +507,14 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	}
 
 	/**
-	 * Captures the window, including decorations.  This will use a {@link Robot} to create a 
+	 * Captures the window, including decorations.  This will use a {@link Robot} to create a
 	 * screen capture, which has the effect of getting all items within the window bounds.  This
 	 * method is needed if you wish to capture child windows, like popups/hovers.
-	 * 
-	 * <P>Other capture methods will not use the screen capture mechanism, but rather will 
-	 * directly render the given component.  In this case, subordinate windows will not be 
+	 *
+	 * <P>Other capture methods will not use the screen capture mechanism, but rather will
+	 * directly render the given component.  In this case, subordinate windows will not be
 	 * captured.  For example, see {@link #captureProvider(Class)}.
-	 * 
+	 *
 	 * @param clazz the provider's class
 	 */
 	public void captureProviderWindow(Class<? extends ComponentProvider> clazz) {
@@ -520,14 +523,14 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	}
 
 	/**
-	 * Captures the window, including decorations.  This will use a {@link Robot} to create a 
+	 * Captures the window, including decorations.  This will use a {@link Robot} to create a
 	 * screen capture, which has the effect of getting all items within the window bounds.  This
 	 * method is needed if you wish to capture child windows, like popups/hovers.
-	 * 
-	 * <P>Other capture methods will not use the screen capture mechanism, but rather will 
-	 * directly render the given component.  In this case, subordinate windows will not be 
+	 *
+	 * <P>Other capture methods will not use the screen capture mechanism, but rather will
+	 * directly render the given component.  In this case, subordinate windows will not be
 	 * captured.  For example, see {@link #captureProvider(Class)}.
-	 * 
+	 *
 	 * @param provider the provider
 	 */
 	public void captureProviderWindow(ComponentProvider provider) {
@@ -536,14 +539,14 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	}
 
 	/**
-	 * Captures the window, including decorations.  This will use a {@link Robot} to create a 
+	 * Captures the window, including decorations.  This will use a {@link Robot} to create a
 	 * screen capture, which has the effect of getting all items within the window bounds.  This
 	 * method is needed if you wish to capture child windows, like popups/hovers.
-	 * 
-	 * <P>Other capture methods will not use the screen capture mechanism, but rather will 
-	 * directly render the given component.  In this case, subordinate windows will not be 
+	 *
+	 * <P>Other capture methods will not use the screen capture mechanism, but rather will
+	 * directly render the given component.  In this case, subordinate windows will not be
 	 * captured.  For example, see {@link #captureProvider(Class)}.
-	 * 
+	 *
 	 * @param name the provider's name
 	 * @param width the desired width
 	 * @param height the desired height
@@ -557,14 +560,14 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	}
 
 	/**
-	 * Captures the window, including decorations.  This will use a {@link Robot} to create a 
+	 * Captures the window, including decorations.  This will use a {@link Robot} to create a
 	 * screen capture, which has the effect of getting all items within the window bounds.  This
 	 * method is needed if you wish to capture child windows, like popups/hovers.
-	 * 
-	 * <P>Other capture methods will not use the screen capture mechanism, but rather will 
-	 * directly render the given component.  In this case, subordinate windows will not be 
+	 *
+	 * <P>Other capture methods will not use the screen capture mechanism, but rather will
+	 * directly render the given component.  In this case, subordinate windows will not be
 	 * captured.  For example, see {@link #captureProvider(Class)}.
-	 * 
+	 *
 	 * @param provider the provider's name
 	 * @param width the desired width
 	 * @param height the desired height
@@ -607,7 +610,7 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 
 			// The image returned here must be a BufferedImage, so create one
 			// if not. It may be a ToolkitImage (eg: if the icon in question
-			// is retrieved from Icons.java), which would fail on a cast to 
+			// is retrieved from Icons.java), which would fail on a cast to
 			// BufferedImage during the save operation.
 			image = ImageUtils.getBufferedImage(image);
 		});
@@ -763,7 +766,7 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 
 	public void generateImage(Component c) {
 
-		// Note: using the screen image has the downside of capturing non-Ghidra windows when 
+		// Note: using the screen image has the downside of capturing non-Ghidra windows when
 		//       focus is lost.   Prefer the component painting itself.   This will not work
 		//       for native constructs like window decorations.
 		if (!(c instanceof Window)) {
@@ -785,20 +788,20 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 		BufferedImage combinedImage =
 			new BufferedImage(rect.width, rect.height, BufferedImage.TYPE_INT_ARGB);
 		Graphics g = combinedImage.getGraphics();
-		g.setColor(Color.WHITE);
+		g.setColor(Palette.WHITE);
 		g.fillRect(0, 0, rect.width, rect.height);
 
 		for (Component component : comps) {
 			int pad = 6;
 			Point p = component.getLocationOnScreen();
-			g.setColor(new Color(250, 250, 250));
+			g.setColor(ColorUtils.getOpaqueColor(0xfafafa)); // just slightly not white
 			g.fillRoundRect(p.x - rect.x - pad, p.y - rect.y - pad, component.getWidth() + pad * 2,
 				component.getHeight() + pad * 2, pad * 2, pad * 2);
 		}
 		for (Component component : comps) {
 			int pad = 3;
 			Point p = component.getLocationOnScreen();
-			g.setColor(new Color(240, 240, 240));
+			g.setColor(ColorUtils.getOpaqueColor(0xf0f0f0)); // faint gray
 			g.fillRoundRect(p.x - rect.x - pad, p.y - rect.y - pad, component.getWidth() + pad * 2,
 				component.getHeight() + pad * 2, pad * 2, pad * 2);
 		}
@@ -1275,13 +1278,16 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 
 	}
 
-	public void positionListingTop(final long address) {
-		runSwing(() -> {
+	public void positionListingTop(long address) {
+		boolean didGoTo = runSwing(() -> {
 			CodeBrowserPlugin plugin = getPlugin(tool, CodeBrowserPlugin.class);
 			FieldPanel fieldPanel = plugin.getFieldPanel();
-			plugin.goToField(addr(address), AddressFieldFactory.FIELD_NAME, 0, 0);
+			boolean result = plugin.goToField(addr(address), AddressFieldFactory.FIELD_NAME, 0, 0);
 			fieldPanel.positionCursor(0);
+			return result;
 		});
+
+		assertTrue("Go To failed for address: " + address, didGoTo);
 	}
 
 	public void positionListingCenter(final long address) {
@@ -1370,7 +1376,7 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	}
 
 	public void drawRectangleWithDropShadowAround(JComponent component, Color color, int padding) {
-		Rectangle r = drawRectangleAround(component, Color.BLACK, padding);
+		Rectangle r = drawRectangleAround(component, Java.BORDER, padding);
 
 		// move it back a bit to create the drop-shadow effect
 		r.x -= padding;
@@ -1386,16 +1392,16 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 	 * Draws a rectangle around the given component.  The root parameter is used to calculate
 	 * screen coordinates.   This allows you to capture a sub-component of a UI, drawing
 	 * rectangles around children of said sub-component.
-	 * 
-	 * <P>If you are unsure of what to pass for <code>root</code>, the call 
+	 *
+	 * <P>If you are unsure of what to pass for <code>root</code>, the call
 	 * {@link #drawRectangleAround(JComponent, Color, int)} instead.
-	 * 
+	 *
 	 * @param component the component to be en-rectangled
-	 * @param root the outermost container widget being displayed; null implies a 
+	 * @param root the outermost container widget being displayed; null implies a
 	 * 		  top-level parent
 	 * @param color the rectangle color
 	 * @param padding the space between the rectangle and the component; more space makes
-	 *        the component more visible 
+	 *        the component more visible
 	 * @return the bounds of the drawn rectangle
 	 */
 	public Rectangle drawRectangleAround(JComponent component, JComponent root, Color color,
@@ -1583,16 +1589,16 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 
 	/**
 	 * Crops a part of the current image, keeping what is inside the given bounds.  This method
-	 * creates a shape such that the top and bottom of the cropped image have a jagged line, 
+	 * creates a shape such that the top and bottom of the cropped image have a jagged line,
 	 * looking somewhat like a sideways lightening bolt.
-	 * 
+	 *
 	 * @param bounds the bounds to keep
 	 * @return the snippet
 	 */
 	public Image takeSnippet(Rectangle bounds) {
 		int margin = 20;
 		int topMargin = 4;
-		padImage(Color.WHITE, 0, margin, 0, margin);
+		padImage(Colors.BACKGROUND, 0, margin, 0, margin);
 		int rise = 8;
 		bounds.width += 2 * margin;
 
@@ -1623,7 +1629,7 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 
 		g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-		g2.setColor(Color.BLACK);
+		g2.setColor(Java.BORDER);
 		g2.setStroke(new BasicStroke(3f));
 		g2.draw(topPath);
 		g2.draw(bottomPath);
@@ -1704,46 +1710,12 @@ public abstract class AbstractScreenShotGenerator extends AbstractGhidraHeadedIn
 		return null;
 	}
 
-	public <T extends JComponent> T findChildWithType(Container node, Class<T> cls,
-			Predicate<T> pred) {
-		synchronized (node.getTreeLock()) {
-			if (cls.isInstance(node)) {
-				T potential = cls.cast(node);
-				if (pred == null || pred.test(potential)) {
-					return potential;
-				}
-			}
-			for (Component child : node.getComponents()) {
-				if (!(child instanceof Container)) {
-					return null;
-				}
-				Container cont = (Container) child;
-				JComponent found = findChildWithType(cont, cls, pred);
-				if (found != null) {
-					return cls.cast(found);
-				}
-			}
-		}
-		return null;
-	}
-
-	public <T extends JComponent> T findComponent(final Class<T> cls, final Predicate<T> pred) {
-		final DialogComponentProvider dialog = getDialog();
-		final AtomicReference<T> result = new AtomicReference<>();
-		runSwing(() -> {
-			JComponent top = dialog.getComponent();
-			result.set(findChildWithType(top, cls, pred));
-		});
-		waitForSwing();
-		return result.get();
-	}
-
 	public Component showTab(final String title) {
-		final DialogComponentProvider dialog = getDialog();
-		final AtomicReference<Component> result = new AtomicReference<>();
+		DialogComponentProvider dialog = getDialog();
+		AtomicReference<Component> result = new AtomicReference<>();
 		runSwing(() -> {
 			JComponent top = dialog.getComponent();
-			JTabbedPane tabs = findChildWithType(top, JTabbedPane.class, null);
+			JTabbedPane tabs = findComponent(top, JTabbedPane.class);
 			if (tabs == null) {
 				throw new IllegalStateException("No tab pane is present in current dialog");
 			}

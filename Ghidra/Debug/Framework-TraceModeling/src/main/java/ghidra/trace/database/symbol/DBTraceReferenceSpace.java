@@ -20,29 +20,35 @@ import java.util.Collection;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import com.google.common.collect.Collections2;
-import com.google.common.collect.Range;
 
 import db.DBHandle;
 import db.DBRecord;
 import ghidra.program.model.address.*;
 import ghidra.program.model.lang.Language;
 import ghidra.program.model.lang.Register;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.*;
 import ghidra.trace.database.DBTrace;
 import ghidra.trace.database.DBTraceUtils;
-import ghidra.trace.database.DBTraceUtils.*;
+import ghidra.trace.database.DBTraceUtils.RefTypeDBFieldCodec;
+import ghidra.trace.database.address.DBTraceOverlaySpaceAdapter;
+import ghidra.trace.database.address.DBTraceOverlaySpaceAdapter.AddressDBFieldCodec;
+import ghidra.trace.database.address.DBTraceOverlaySpaceAdapter.DecodesAddresses;
 import ghidra.trace.database.map.*;
 import ghidra.trace.database.map.DBTraceAddressSnapRangePropertyMapTree.AbstractDBTraceAddressSnapRangePropertyMapData;
 import ghidra.trace.database.map.DBTraceAddressSnapRangePropertyMapTree.TraceAddressSnapRangeQuery;
 import ghidra.trace.database.space.AbstractDBTraceSpaceBasedManager.DBTraceSpaceEntry;
 import ghidra.trace.database.space.DBTraceSpaceBased;
-import ghidra.trace.database.thread.DBTraceThread;
+import ghidra.trace.model.Lifespan;
 import ghidra.trace.model.Trace.TraceReferenceChangeType;
 import ghidra.trace.model.Trace.TraceSymbolChangeType;
+import ghidra.trace.model.memory.TraceMemoryRegion;
 import ghidra.trace.model.symbol.TraceReference;
 import ghidra.trace.model.symbol.TraceReferenceSpace;
+import ghidra.trace.model.thread.TraceThread;
 import ghidra.trace.util.TraceChangeRecord;
 import ghidra.util.LockHold;
+import ghidra.util.Msg;
 import ghidra.util.database.*;
 import ghidra.util.database.annot.*;
 import ghidra.util.exception.VersionException;
@@ -66,7 +72,7 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 		OFFSET {
 			@Override
 			protected DBTraceReference construct(DBTraceReferenceEntry ent) {
-				return new DBTraceOffsetReference(ent);
+				return new DBTraceOffsetReference(ent, false);
 			}
 		},
 		SHIFT {
@@ -74,12 +80,28 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 			protected DBTraceReference construct(DBTraceReferenceEntry ent) {
 				return new DBTraceShiftedReference(ent);
 			}
+		},
+		OFFSET_EXTERNAL { // Offset Reference into EXTERNAL memory block region
+			@Override
+			protected DBTraceReference construct(DBTraceReferenceEntry ent) {
+				return new DBTraceOffsetReference(ent, true);
+			}
 		};
 
 		protected abstract DBTraceReference construct(DBTraceReferenceEntry ent);
 	}
 
-	@DBAnnotatedObjectInfo(version = 0)
+	/**
+	 * A reference entry
+	 * 
+	 * <p>
+	 * Version history:
+	 * <ul>
+	 * <li>1: Change {@link #toAddress} to 10-byte fixed encoding</li>
+	 * <li>0: Initial version and previous unversioned implementation</li>
+	 * </ul>
+	 */
+	@DBAnnotatedObjectInfo(version = 1)
 	protected static class DBTraceReferenceEntry
 			extends AbstractDBTraceAddressSnapRangePropertyMapData<DBTraceReferenceEntry>
 			implements DecodesAddresses {
@@ -121,8 +143,11 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 			return DBTraceUtils.tableName(TABLE_NAME, space, threadKey, frameLevel);
 		}
 
-		@DBAnnotatedField(column = TO_ADDR_COLUMN_NAME, indexed = true, codec = AddressDBFieldCodec.class)
-		protected Address toAddress;
+		@DBAnnotatedField(
+			column = TO_ADDR_COLUMN_NAME,
+			indexed = true,
+			codec = AddressDBFieldCodec.class)
+		protected Address toAddress = Address.NO_ADDRESS;
 		@DBAnnotatedField(column = SYMBOL_ID_COLUMN_NAME, indexed = true)
 		protected long symbolId; // TODO: Is this at the from or to address? I think TO...
 		@DBAnnotatedField(column = REF_TYPE_COLUMN_NAME, codec = RefTypeDBFieldCodec.class)
@@ -146,8 +171,8 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 		}
 
 		@Override
-		public Address decodeAddress(int spaceId, long offset) {
-			return this.space.baseLanguage.getAddressFactory().getAddress(spaceId, offset);
+		public DBTraceOverlaySpaceAdapter getOverlaySpaceAdapter() {
+			return this.space.manager.overlayAdapter;
 		}
 
 		@Override
@@ -183,13 +208,13 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 				FLAGS_COLUMN);
 		}
 
-		protected void setLifespan(Range<Long> lifespan) {
+		protected void setLifespan(Lifespan lifespan) {
 			super.doSetLifespan(lifespan);
 			space.manager.doSetXRefLifespan(this);
 		}
 
 		public void setEndSnap(long endSnap) {
-			setLifespan(DBTraceUtils.toRange(DBTraceUtils.lowerEndpoint(lifespan), endSnap));
+			setLifespan(lifespan.withMax(endSnap));
 		}
 
 		public void setSymbolId(long symbolId) {
@@ -301,7 +326,7 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 			update(REF_SPACE_COLUMN, REF_KEY_COLUMN);
 		}
 
-		protected void setLifespan(Range<Long> lifespan) {
+		protected void setLifespan(Lifespan lifespan) {
 			super.doSetLifespan(lifespan);
 		}
 	}
@@ -309,6 +334,8 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	protected final DBTraceReferenceManager manager;
 	protected final DBHandle dbh;
 	protected final AddressSpace space;
+	protected final TraceThread thread;
+	protected final int frameLevel;
 	protected final ReadWriteLock lock;
 	protected final Language baseLanguage;
 	protected final DBTrace trace;
@@ -322,10 +349,12 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	protected final DBCachedObjectIndex<Long, DBTraceXRefEntry> xrefsByRefKey;
 
 	public DBTraceReferenceSpace(DBTraceReferenceManager manager, DBHandle dbh, AddressSpace space,
-			DBTraceSpaceEntry ent) throws VersionException, IOException {
+			DBTraceSpaceEntry ent, TraceThread thread) throws VersionException, IOException {
 		this.manager = manager;
 		this.dbh = dbh;
 		this.space = space;
+		this.thread = thread;
+		this.frameLevel = ent.getFrameLevel();
 		this.lock = manager.getLock();
 		this.baseLanguage = manager.getBaseLanguage();
 		this.trace = manager.getTrace();
@@ -338,13 +367,14 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 		int frameLevel = ent.getFrameLevel();
 		this.referenceMapSpace = new DBTraceAddressSnapRangePropertyMapSpace<>(
 			DBTraceReferenceEntry.tableName(space, threadKey, frameLevel), factory, lock, space,
-			DBTraceReferenceEntry.class, (t, s, r) -> new DBTraceReferenceEntry(this, t, s, r));
+			thread, frameLevel, DBTraceReferenceEntry.class,
+			(t, s, r) -> new DBTraceReferenceEntry(this, t, s, r));
 		this.refsBySymbolId =
 			referenceMapSpace.getUserIndex(long.class, DBTraceReferenceEntry.SYMBOL_ID_COLUMN);
 
 		this.xrefMapSpace = new DBTraceAddressSnapRangePropertyMapSpace<>(
-			DBTraceXRefEntry.tableName(space, threadKey, frameLevel), factory, lock, space,
-			DBTraceXRefEntry.class, (t, s, r) -> new DBTraceXRefEntry(this, t, s, r));
+			DBTraceXRefEntry.tableName(space, threadKey, frameLevel), factory, lock, space, thread,
+			frameLevel, DBTraceXRefEntry.class, (t, s, r) -> new DBTraceXRefEntry(this, t, s, r));
 		this.xrefsByRefKey = xrefMapSpace.getUserIndex(long.class, DBTraceXRefEntry.REF_KEY_COLUMN);
 	}
 
@@ -383,13 +413,13 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public DBTraceThread getThread() {
-		return null;
+	public TraceThread getThread() {
+		return thread;
 	}
 
 	@Override
 	public int getFrameLevel() {
-		return 0;
+		return frameLevel;
 	}
 
 	@Override
@@ -398,14 +428,14 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public DBTraceReference addReference(Range<Long> lifespan, Reference reference) {
+	public DBTraceReference addReference(Lifespan lifespan, Reference reference) {
 		// Copy over other properties?:
 		//    Symbol ID? (maybe not, since associated symbol may not exist here
 		//    Primary? (maybe not, primary is more a property of the from address
 		// TODO: Reference (from, to, opIndex) must be unique!
 		if (reference.isOffsetReference()) {
 			OffsetReference oRef = (OffsetReference) reference;
-			return addOffsetReference(lifespan, oRef.getFromAddress(), oRef.getToAddress(),
+			return addOffsetReference(lifespan, oRef.getFromAddress(), oRef.getBaseAddress(), true,
 				oRef.getOffset(), oRef.getReferenceType(), oRef.getSource(),
 				oRef.getOperandIndex());
 		}
@@ -418,7 +448,7 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 			reference.getReferenceType(), reference.getSource(), reference.getOperandIndex());
 	}
 
-	protected void makeWay(Range<Long> span, Address fromAddress, Address toAddress,
+	protected void makeWay(Lifespan span, Address fromAddress, Address toAddress,
 			int operandIndex) {
 		// TODO: Do I consider "compatibility?" as in ReferenceDBManager?
 		// NOTE: Always call with the write lock
@@ -438,7 +468,7 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public DBTraceReference addMemoryReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceReference addMemoryReference(Lifespan lifespan, Address fromAddress,
 			Address toAddress, RefType refType, SourceType source, int operandIndex) {
 		if (operandIndex < -1) {
 			throw new IllegalArgumentException("operandIndex");
@@ -455,18 +485,61 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 		}
 	}
 
+	private boolean isExternalBlockAddress(Lifespan lifespan, Address addr) {
+		// TODO: Verify that this works for emulation
+		TraceMemoryRegion region =
+			trace.getMemoryManager().getRegionContaining(lifespan.lmin(), addr);
+		return region != null && MemoryBlock.EXTERNAL_BLOCK_NAME.equals(region.getName());
+	}
+
 	@Override
-	public DBTraceOffsetReference addOffsetReference(Range<Long> lifespan, Address fromAddress,
-			Address toAddress, long offset, RefType refType, SourceType source, int operandIndex) {
+	public DBTraceOffsetReference addOffsetReference(Lifespan lifespan, Address fromAddress,
+			Address toAddress, boolean toAddrIsBase, long offset, RefType refType,
+			SourceType source, int operandIndex) {
 		if (operandIndex < -1) {
 			throw new IllegalArgumentException("operandIndex");
 		}
+
 		try (LockHold hold = LockHold.lock(lock.writeLock())) {
+
+			// Handle EXTERNAL Block offset-reference transformation
+			TypeEnum type = TypeEnum.OFFSET;
+			boolean isExternalBlockRef = isExternalBlockAddress(lifespan, toAddress);
+			boolean badOffsetReference = false;
+			if (isExternalBlockRef) {
+				type = TypeEnum.OFFSET_EXTERNAL;
+				if (!toAddrIsBase) {
+					Address baseAddr = toAddress.subtractWrap(offset);
+					if (isExternalBlockAddress(lifespan, baseAddr)) {
+						toAddress = baseAddr;
+						toAddrIsBase = true;
+					}
+					else {
+						// assume unintentional reference into EXTERNAL block
+						isExternalBlockRef = false;
+						type = TypeEnum.OFFSET;
+						badOffsetReference = true;
+					}
+				}
+			}
+			else if (toAddrIsBase) {
+				toAddress = toAddress.addWrap(offset);
+				toAddrIsBase = false;
+				if (isExternalBlockAddress(lifespan, toAddress)) {
+					badOffsetReference = true;
+				}
+			}
+
+			if (badOffsetReference) {
+				Msg.warn(this, "Offset Reference from " + fromAddress +
+					" produces bad Xref into EXTERNAL block");
+			}
+
 			makeWay(lifespan, fromAddress, toAddress, operandIndex);
 
 			DBTraceReferenceEntry entry = referenceMapSpace.put(fromAddress, lifespan, null);
-			entry.set(toAddress, -1, refType, operandIndex, offset, false, TypeEnum.OFFSET, source);
-			DBTraceOffsetReference ref = new DBTraceOffsetReference(entry);
+			entry.set(toAddress, -1, refType, operandIndex, offset, false, type, source);
+			DBTraceOffsetReference ref = new DBTraceOffsetReference(entry, isExternalBlockRef);
 			entry.ref = ref;
 			manager.doAddXRef(entry);
 			return ref;
@@ -474,7 +547,7 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public DBTraceShiftedReference addShiftedReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceShiftedReference addShiftedReference(Lifespan lifespan, Address fromAddress,
 			Address toAddress, int shift, RefType refType, SourceType source, int operandIndex) {
 		if (operandIndex < -1) {
 			throw new IllegalArgumentException("operandIndex");
@@ -492,14 +565,14 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public DBTraceReference addRegisterReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceReference addRegisterReference(Lifespan lifespan, Address fromAddress,
 			Register toRegister, RefType refType, SourceType source, int operandIndex) {
 		return addMemoryReference(lifespan, fromAddress, toRegister.getAddress(), refType, source,
 			operandIndex);
 	}
 
 	@Override
-	public DBTraceReference addStackReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceReference addStackReference(Lifespan lifespan, Address fromAddress,
 			int toStackOffset, RefType refType, SourceType source, int operandIndex) {
 		// TODO: base and guest compiler specs, too?
 		AddressSpace stack = baseLanguage.getDefaultCompilerSpec().getStackSpace();
@@ -541,7 +614,7 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public Collection<? extends DBTraceReference> getReferencesFromRange(Range<Long> span,
+	public Collection<? extends DBTraceReference> getReferencesFromRange(Lifespan span,
 			AddressRange range) {
 		return Collections2.transform(
 			referenceMapSpace.reduce(TraceAddressSnapRangeQuery.intersecting(range, span)).values(),
@@ -571,29 +644,27 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public void clearReferencesFrom(Range<Long> span, AddressRange range) {
-		long startSnap = DBTraceUtils.lowerEndpoint(span);
-		for (DBTraceReferenceEntry ref : referenceMapSpace.reduce(
-			TraceAddressSnapRangeQuery.intersecting(range, span)).values()) {
-			if (DBTraceUtils.lowerEndpoint(ref.getLifespan()) < startSnap) {
-				Range<Long> oldSpan = ref.getLifespan();
-				ref.setEndSnap(startSnap - 1);
-				trace.setChanged(new TraceChangeRecord<>(TraceReferenceChangeType.LIFESPAN_CHANGED,
-					this, ref.ref, oldSpan, ref.getLifespan()));
-			}
-			else {
-				ref.ref.delete();
+	public void clearReferencesFrom(Lifespan span, AddressRange range) {
+		try (LockHold hold = manager.getTrace().lockWrite()) {
+			long startSnap = span.lmin();
+			for (DBTraceReferenceEntry ref : referenceMapSpace.reduce(
+				TraceAddressSnapRangeQuery.intersecting(range, span)).values()) {
+				truncateOrDeleteEntry(ref, startSnap);
 			}
 			// TODO: Coalesce events?
 		}
 	}
 
-	protected DBTraceReference getRefForXRefEntry(DBTraceXRefEntry e) {
+	protected DBTraceReferenceEntry getRefEntryForXRefEntry(DBTraceXRefEntry e) {
 		AddressSpace fromAddressSpace =
 			baseLanguage.getAddressFactory().getAddressSpace(e.refSpaceId);
 		DBTraceReferenceSpace fromSpace = manager.getForSpace(fromAddressSpace, false);
 		assert fromSpace != null;
-		return fromSpace.referenceMapSpace.getDataByKey(e.refKey).ref;
+		return fromSpace.referenceMapSpace.getDataByKey(e.refKey);
+	}
+
+	protected DBTraceReference getRefForXRefEntry(DBTraceXRefEntry e) {
+		return getRefEntryForXRefEntry(e).ref;
 	}
 
 	@Override
@@ -604,22 +675,47 @@ public class DBTraceReferenceSpace implements DBTraceSpaceBased, TraceReferenceS
 	}
 
 	@Override
-	public Collection<? extends DBTraceReference> getReferencesToRange(Range<Long> span,
+	public Collection<? extends DBTraceReference> getReferencesToRange(Lifespan span,
 			AddressRange range) {
 		return Collections2.transform(
 			xrefMapSpace.reduce(TraceAddressSnapRangeQuery.intersecting(range, span)).values(),
 			this::getRefForXRefEntry);
 	}
 
+	protected void truncateOrDeleteEntry(DBTraceReferenceEntry ref, long otherStartSnap) {
+		if (ref.getLifespan().lmin() < otherStartSnap) {
+			Lifespan oldSpan = ref.getLifespan();
+			ref.setEndSnap(otherStartSnap - 1);
+			trace.setChanged(new TraceChangeRecord<>(TraceReferenceChangeType.LIFESPAN_CHANGED,
+				this, ref.ref, oldSpan, ref.getLifespan()));
+		}
+		else {
+			ref.ref.delete();
+		}
+	}
+
 	@Override
-	public AddressSetView getReferenceSources(Range<Long> span) {
+	public void clearReferencesTo(Lifespan span, AddressRange range) {
+		try (LockHold hold = manager.getTrace().lockWrite()) {
+			long startSnap = span.lmin();
+			for (DBTraceXRefEntry xref : xrefMapSpace.reduce(
+				TraceAddressSnapRangeQuery.intersecting(range, span)).values()) {
+				DBTraceReferenceEntry ref = getRefEntryForXRefEntry(xref);
+				truncateOrDeleteEntry(ref, startSnap);
+			}
+			// TODO: Coalesce events?
+		}
+	}
+
+	@Override
+	public AddressSetView getReferenceSources(Lifespan span) {
 		return new DBTraceAddressSnapRangePropertyMapAddressSetView<>(space, lock,
 			referenceMapSpace.reduce(TraceAddressSnapRangeQuery.intersecting(fullSpace, span)),
 			e -> true);
 	}
 
 	@Override
-	public AddressSetView getReferenceDestinations(Range<Long> span) {
+	public AddressSetView getReferenceDestinations(Lifespan span) {
 		return new DBTraceAddressSnapRangePropertyMapAddressSetView<>(space, lock,
 			xrefMapSpace.reduce(TraceAddressSnapRangeQuery.intersecting(fullSpace, span)),
 			e -> true);

@@ -24,6 +24,8 @@ import org.apache.tools.ant.filters.*
  *
  *********************************************************************************/
 
+apply from: "$rootProject.projectDir/gradle/support/sbom.gradle"
+
 /********************************************************************************
  * Local Vars
  *********************************************************************************/
@@ -122,11 +124,6 @@ task createJavadocs(type: Javadoc, description: 'Generate javadocs for all proje
 	// Must add classpath for main and test source sets. Javadoc will fail if it cannot
 	// find referenced classes.
 	classpath =  rootProject.ext.ghidraPath
-	
-	// If we don't exclude module directories, the javascript search feature doesn't work
-	if (JavaVersion.current().isJava11()) {
-		options.addBooleanOption("-no-module-directories", true)
-	}
 
 	// generate documentation using html5
 	options.addBooleanOption("html5", true)
@@ -134,11 +131,7 @@ task createJavadocs(type: Javadoc, description: 'Generate javadocs for all proje
 	options.addBooleanOption('Xdoclint:none', true)
 	
 	// Some internal packages are not public and need to be exported.
-    options.addMultilineStringsOption("-add-exports").setValue(["java.desktop/sun.awt.image=ALL-UNNAMED", 
-    															"java.desktop/sun.awt=ALL-UNNAMED", 
-    															"java.base/sun.security.x509=ALL-UNNAMED", 
-    															"java.base/sun.security.provider=ALL-UNNAMED", 
-    															"java.base/sun.security.util=ALL-UNNAMED"])
+	options.addMultilineStringsOption("-add-exports").setValue(["java.desktop/sun.awt=ALL-UNNAMED"])
 }
 
 
@@ -194,14 +187,9 @@ task createJsondocs(type: Javadoc, description: 'Generate JSON docs for all proj
 	// The JsonDoclet doesn't have the -notimestamp option so ensure it isn't set.
 	options.setNoTimestamp(false)
 	
-		
-	// Some internal packages are not public and need to be exported. 
-    options.addMultilineStringsOption("-add-exports").setValue(["java.desktop/sun.awt.image=ALL-UNNAMED", 
-    															"java.desktop/sun.awt=ALL-UNNAMED", 
-    															"java.base/sun.security.x509=ALL-UNNAMED", 
-    															"java.base/sun.security.provider=ALL-UNNAMED", 
-    															"java.base/sun.security.util=ALL-UNNAMED"])
-	
+	// Some internal packages are not public and need to be exported.
+	options.addMultilineStringsOption("-add-exports").setValue(["java.desktop/sun.awt=ALL-UNNAMED"])
+
 	options.doclet = "JsonDoclet"
 	doFirst {
 		options.docletpath = new ArrayList(configurations.jsondoc.files)
@@ -241,6 +229,10 @@ task zipJavadocs(type: Zip) {
  *
  **********************************************************************************************/
 task assembleDistribution (type: Copy) {
+	// force this task to always be "out of date"
+	// Not sure why this is necessary, but without it, gradle thinks this task is "up to date"
+	// every other time it is run even though in both cases the output directory has been removed
+	outputs.upToDateWhen {false}
 
 	group 'private'
 	description "Copies core files/folders to the distribution location."
@@ -352,6 +344,22 @@ task assembleDistribution (type: Copy) {
 	from (ROOT_PROJECT_DIR + "/GhidraBuild/patch") {
 		into "Ghidra/patch"
 	}
+	
+	/////////////////////////////////
+	// Distro native build support
+	/////////////////////////////////
+	from (ROOT_PROJECT_DIR + "/GPL") {
+		include "settings.gradle"
+		into "Ghidra"
+	}
+
+	//////////////////////////////////////
+	// Software Bill of Materials (SBOM)
+	//////////////////////////////////////
+	doLast {
+		def bomFile = file("${destinationDir}/bom.json")
+		writeSoftwareBillOfMaterials(destinationDir, bomFile)
+	}
 }
 
 /*********************************************************************************
@@ -366,6 +374,11 @@ task assembleDistribution (type: Copy) {
  *********************************************************************************/
 project.PLATFORMS.each { platform ->
 	task ("assembleDistribution_${platform.name}", type: Copy ) { 	
+		// force this task to always be "out of date"
+		// Not sure why this is necessary, but without it, gradle thinks this task is "up to date"
+		// every other time it is run even though in both cases the output directory has been removed
+		outputs.upToDateWhen {false}
+
 		
 		// delete the gradle ziptree temp directory because of gradle bug not cleaning up its temp files.
 		delete rootProject.file("build/tmp/expandedArchives")

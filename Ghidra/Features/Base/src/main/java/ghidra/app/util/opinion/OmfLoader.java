@@ -27,19 +27,20 @@ import ghidra.app.util.bin.format.omf.OmfFixupRecord.Subrecord;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressOverflowException;
-import ghidra.program.model.data.*;
+import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.Undefined;
 import ghidra.program.model.lang.Language;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.*;
+import ghidra.program.model.reloc.Relocation.Status;
 import ghidra.program.model.symbol.*;
 import ghidra.program.model.util.CodeUnitInsertionException;
 import ghidra.util.DataConverter;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.InvalidInputException;
 import ghidra.util.task.TaskMonitor;
-import ghidra.util.task.TaskMonitorAdapter;
 
-public class OmfLoader extends AbstractLibrarySupportLoader {
+public class OmfLoader extends AbstractProgramWrapperLoader {
 	public final static String OMF_NAME = "Relocatable Object Module Format (OMF)";
 	public final static long MIN_BYTE_LENGTH = 11;
 	public final static long IMAGE_BASE = 0x2000; // Base offset to start loading segments
@@ -84,7 +85,7 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 			reader.setPointerIndex(0);
 			OmfFileHeader scan;
 			try {
-				scan = OmfFileHeader.scan(reader, TaskMonitorAdapter.DUMMY_MONITOR, true);
+				scan = OmfFileHeader.scan(reader, TaskMonitor.DUMMY, true);
 			}
 			catch (OmfException e) {
 				throw new IOException("Bad header format: " + e.getMessage());
@@ -114,7 +115,7 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 		OmfFileHeader header = null;
 		BinaryReader reader = OmfFileHeader.createReader(provider);
 		try {
-			header = OmfFileHeader.parse(reader, monitor);
+			header = OmfFileHeader.parse(reader, monitor, log);
 			header.resolveNames();
 			header.sortSegmentDataBlocks();
 			OmfFileHeader.doLinking(IMAGE_BASE, header.getSegments(), header.getGroups());
@@ -131,20 +132,14 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 		// the original bytes.
 		MemoryBlockUtils.createFileBytes(program, provider, monitor);
 
-		int id = program.startTransaction("loading program from OMF");
-		boolean success = false;
 		try {
 			processSegmentHeaders(reader, header, program, monitor, log);
 			processExternalSymbols(header, program, monitor, log);
 			processPublicSymbols(header, program, monitor, log);
 			processRelocations(header, program, monitor, log);
-			success = true;
 		}
 		catch (AddressOverflowException e) {
 			throw new IOException(e);
-		}
-		finally {
-			program.endTransaction(id, success);
 		}
 	}
 
@@ -268,8 +263,9 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 					}
 					long[] values = new long[1];
 					values[0] = finalvalue;
-					program.getRelocationTable().add(state.locAddress, state.locationType, values,
-						origbytes, null);
+					program.getRelocationTable()
+							.add(state.locAddress, Status.APPLIED,
+								state.locationType, values, origbytes, null);
 				}
 			}
 		}
@@ -283,7 +279,6 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 	 * @param reader is a reader for the underlying file
 	 * @param header is the OMF file header
 	 * @param program is the Program
-	 * @param mbu is the block creation utility
 	 * @param monitor is checked for cancellation
 	 * @param log receives error messages
 	 * @throws AddressOverflowException if the underlying data stream causes an address to wrap
@@ -552,10 +547,9 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 	 * @param size is the number of bytes in the data
 	 * @return the new created Data object
 	 * @throws CodeUnitInsertionException if the new data conflicts with another object
-	 * @throws DataTypeConflictException if the data-type cannot be created
 	 */
 	private Data createUndefined(Listing listing, Memory memory, Address addr, int size)
-			throws CodeUnitInsertionException, DataTypeConflictException {
+			throws CodeUnitInsertionException {
 		MemoryBlock block = memory.getBlock(addr);
 		if (block == null || !block.isInitialized()) {
 			return null;

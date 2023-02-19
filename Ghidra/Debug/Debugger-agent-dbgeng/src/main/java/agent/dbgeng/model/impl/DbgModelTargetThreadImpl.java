@@ -15,32 +15,43 @@
  */
 package agent.dbgeng.model.impl;
 
+import java.lang.invoke.MethodHandles;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import agent.dbgeng.dbgeng.DebugThreadId;
 import agent.dbgeng.manager.*;
-import agent.dbgeng.manager.cmd.DbgSetActiveThreadCommand;
 import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.model.iface1.DbgModelTargetFocusScope;
 import agent.dbgeng.model.iface2.*;
 import ghidra.dbg.target.TargetEnvironment;
 import ghidra.dbg.target.TargetFocusScope;
+import ghidra.dbg.target.TargetMethod.AnnotatedTargetMethod;
 import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 
-@TargetObjectSchemaInfo(name = "Thread", elements = {
-	@TargetElementType(type = Void.class) }, attributes = {
-		@TargetAttributeType(name = "Registers", type = DbgModelTargetRegisterContainerImpl.class, required = true, fixed = true),
-		@TargetAttributeType(name = "Stack", type = DbgModelTargetStackImpl.class, required = true, fixed = true),
+@TargetObjectSchemaInfo(
+	name = "Thread",
+	elements = {
+		@TargetElementType(type = Void.class) },
+	attributes = {
+		@TargetAttributeType(
+			name = "Registers",
+			type = DbgModelTargetRegisterContainerImpl.class,
+			required = true,
+			fixed = true),
+		@TargetAttributeType(
+			name = "Stack",
+			type = DbgModelTargetStackImpl.class,
+			required = true,
+			fixed = true),
 		@TargetAttributeType(name = TargetEnvironment.ARCH_ATTRIBUTE_NAME, type = String.class),
 		@TargetAttributeType(type = Void.class) })
 public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetThread {
 
 	public static final TargetStepKindSet SUPPORTED_KINDS = TargetStepKindSet.of( //
-		TargetStepKind.ADVANCE, //
 		TargetStepKind.FINISH, //
 		TargetStepKind.LINE, //
 		TargetStepKind.OVER, //
@@ -80,6 +91,9 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 		this.registers = new DbgModelTargetRegisterContainerImpl(this);
 		this.stack = new DbgModelTargetStackImpl(this, process);
 
+		changeAttributes(List.of(), List.of(),
+			AnnotatedTargetMethod.collectExports(MethodHandles.lookup(), threads.getModel(), this),
+			"Methods");
 		changeAttributes(List.of(), List.of( //
 			registers, //
 			stack //
@@ -99,7 +113,11 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 		if (getManager().isKernelMode()) {
 			return "[PR" + thread.getId().id + "]";
 		}
-		String tidstr = Long.toString(thread.getTid(), base);
+		Long tid = thread.getTid();
+		if (tid < 0) {
+			return "[" + thread.getId().id + "]";
+		}
+		String tidstr = Long.toString(tid, base);
 		if (base == 16) {
 			tidstr = "0x" + tidstr;
 		}
@@ -131,8 +149,6 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 		switch (kind) {
 			case SKIP:
 				throw new UnsupportedOperationException(kind.name());
-			case ADVANCE: // Why no exec-advance in GDB/MI?
-				return thread.console("advance");
 			default:
 				return model.gateFuture(thread.step(convertToDbg(kind)));
 		}
@@ -146,7 +162,7 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 	@Override
 	public CompletableFuture<Void> setActive() {
 		DbgManagerImpl manager = getManager();
-		return manager.execute(new DbgSetActiveThreadCommand(manager, thread, null));
+		return manager.setActiveThread(thread);
 	}
 
 	public DbgModelTargetRegisterContainerAndBank getRegisters() {

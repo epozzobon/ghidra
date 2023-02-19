@@ -23,8 +23,9 @@ import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
 
+import generic.theme.GThemeDefaults.Colors;
 import ghidra.app.util.html.*;
-import ghidra.app.util.viewer.options.OptionsGui;
+import ghidra.app.util.viewer.field.ListingColors.FunctionColors;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.data.*;
 import ghidra.program.model.data.Enum;
@@ -42,12 +43,6 @@ import ghidra.util.StringUtilities;
  */
 public class ToolTipUtils {
 
-	private static final Color PARAM_NAME_COLOR = new Color(155, 50, 155);
-	private static final Color PARAM_CUSTOM_STORAGE_COLOR =
-		OptionsGui.PARAMETER_CUSTOM.getDefaultColor();
-	private static final Color PARAM_DYNAMIC_STORAGE_COLOR =
-		OptionsGui.PARAMETER_DYNAMIC.getDefaultColor();
-
 	private static final String ELLIPSES = "...";
 	public static final int LINE_LENGTH = 80;
 	private static final int PARAM_LENGTH_WRAP_THRESHOLD = LINE_LENGTH;
@@ -63,13 +58,13 @@ public class ToolTipUtils {
 	}
 
 	/**
-	 * Examines the give <code>dataType</code> and creates a tool tip for it, 
+	 * Examines the give <code>dataType</code> and creates a tool tip for it,
 	 * depending upon its actual class type.
 	 * 
 	 * <P>Note: the text returned here will be truncated as needed for the type of data.  To
 	 * get the full tool tip text, use {@link #getFullToolTipText(DataType)}.
 	 * 
-	 * @param  dataType The data type from which a tool tip will be 
+	 * @param  dataType The data type from which a tool tip will be
 	 *         created.
 	 * @return tool tip text for the given data type.
 	 */
@@ -78,14 +73,14 @@ public class ToolTipUtils {
 	}
 
 	/**
-	 * Examines the give <code>dataType</code> and creates a tool tip for it, 
+	 * Examines the give <code>dataType</code> and creates a tool tip for it,
 	 * depending upon its actual class type.
 	 * 
 	 * <P>Note: the text returned here will not be truncated.  This can result in tool tip windows
 	 * that are too large to fit in the screen.  For truncated tool tip text, use
 	 * {@link #getToolTipText(DataType)}.
 	 * 
-	 * @param  dataType The data type from which a tool tip will be 
+	 * @param  dataType The data type from which a tool tip will be
 	 *         created.
 	 * @return tool tip text for the given data type.
 	 */
@@ -103,27 +98,25 @@ public class ToolTipUtils {
 			if (dataType instanceof TypeDef) {
 				return new TypeDefDataTypeHTMLRepresentation((TypeDef) dataType);
 			}
-			else if (dataType instanceof Composite) {
+			if (dataType instanceof Composite) {
 				return new CompositeDataTypeHTMLRepresentation((Composite) dataType);
 			}
-			else if (dataType instanceof Enum) {
+			if (dataType instanceof Enum) {
 				return new EnumDataTypeHTMLRepresentation((Enum) dataType);
 			}
-			else if (dataType instanceof FunctionDefinition) {
+			if (dataType instanceof FunctionDefinition) {
 				return new FunctionDataTypeHTMLRepresentation((FunctionDefinition) dataType);
 			}
-			else if (dataType instanceof Pointer) {
+			if (dataType instanceof Pointer) {
 				return new PointerDataTypeHTMLRepresentation((Pointer) dataType);
 			}
-			else if (dataType instanceof Array) {
+			if (dataType instanceof Array) {
 				return new ArrayDataTypeHTMLRepresentation((Array) dataType);
 			}
-			else if (dataType instanceof BitFieldDataType) {
+			if (dataType instanceof BitFieldDataType) {
 				return new BitFieldDataTypeHTMLRepresentation((BitFieldDataType) dataType);
 			}
-			else {
-				return new DefaultDataTypeHTMLRepresentation(dataType);
-			}
+			return new DefaultDataTypeHTMLRepresentation(dataType);
 		}
 
 		return new NullDataTypeHTMLRepresentation();
@@ -164,7 +157,7 @@ public class ToolTipUtils {
 			dt = DataType.DEFAULT;
 		}
 
-		buf.append(colorString(Color.BLACK, friendlyEncodeHTML(dt.getName())));
+		buf.append(colorString(Colors.FOREGROUND, friendlyEncodeHTML(dt.getName())));
 		buf.append(HTML_SPACE);
 		buf.append(friendlyEncodeHTML(s.getName()));
 
@@ -238,7 +231,7 @@ public class ToolTipUtils {
 		int length = type.length() + 1 + name.length();
 
 		//
-		// Bound the max width of the tooltip 
+		// Bound the max width of the tooltip
 		//
 		if (length > PARAM_MAX_CHAR_LENGTH) {
 			int half = PARAM_MAX_CHAR_LENGTH / 2;
@@ -258,15 +251,21 @@ public class ToolTipUtils {
 		StringBuilder buf = new StringBuilder();
 		buf.append("<tr><td width=10>&nbsp;</td>"); // indent
 		buf.append("<td width=\"1%\">");
-		buf.append(colorString(Color.BLACK, friendlyEncodeHTML(type)));
+		buf.append(colorString(Colors.FOREGROUND, friendlyEncodeHTML(type)));
 		buf.append("</td><td width=\"1%\">");
+
+		boolean usesCustomStorage = false;
+		Function function = param.getFunction();
+		if (function != null) {
+			usesCustomStorage = function.hasCustomVariableStorage();
+		}
+
 		Color paramColor =
-			param.getFunction().hasCustomVariableStorage() ? PARAM_CUSTOM_STORAGE_COLOR
-					: PARAM_DYNAMIC_STORAGE_COLOR;
+			usesCustomStorage ? FunctionColors.PARAM_CUSTOM : FunctionColors.PARAM_DYNAMIC;
 		buf.append(
 			colorString(paramColor, friendlyEncodeHTML(param.getVariableStorage().toString())));
 		buf.append("</td><td width=\"1%\">");
-		buf.append(colorString(PARAM_NAME_COLOR, friendlyEncodeHTML(name)));
+		buf.append(colorString(FunctionColors.PARAM, friendlyEncodeHTML(name)));
 
 		// consume remaining space and compact other columns
 		buf.append("</td><td width=\"100%\">&nbsp;</td></tr>");
@@ -279,9 +278,9 @@ public class ToolTipUtils {
 		 * streamed directly to the output buffer.
 		 * 
 		 *  Parameters are encoded into individual strings, and a non-HTML length is tallied
-		 *  as each parameter is processed. If the non-HTML length exceeds 
+		 *  as each parameter is processed. If the non-HTML length exceeds
 		 *  PARAM_LENGTH_WRAP_THRESHOLD, the parameter strings are streamed into an HTML table
-		 *  for pretty-printing; otherwise, they are merged into one string and emitted.  
+		 *  for pretty-printing; otherwise, they are merged into one string and emitted.
 		 */
 
 		StringBuilder buffy = new StringBuilder();
@@ -297,7 +296,7 @@ public class ToolTipUtils {
 		}
 
 		String functionName = StringUtilities.trimMiddle(function.getName(), LINE_LENGTH);
-		buffy.append(colorString(Color.BLUE, friendlyEncodeHTML(functionName)));
+		buffy.append(colorString(FunctionColors.NAME, friendlyEncodeHTML(functionName)));
 		buffy.append(HTML_SPACE).append("(");
 
 		buildParameterPreview(function, buffy);
@@ -377,7 +376,7 @@ public class ToolTipUtils {
 		int rawTextLength = length;
 
 		//
-		// Bound the max width of the tooltip 
+		// Bound the max width of the tooltip
 		//
 		if (length > PARAM_MAX_CHAR_LENGTH) {
 			int half = PARAM_MAX_CHAR_LENGTH / 2;
@@ -395,10 +394,10 @@ public class ToolTipUtils {
 		}
 
 		StringBuilder pb = new StringBuilder();
-		pb.append(colorString(Color.BLACK, friendlyEncodeHTML(type)));
+		pb.append(colorString(Colors.FOREGROUND, friendlyEncodeHTML(type)));
 		pb.append(HTML_SPACE);
 
-		pb.append(colorString(PARAM_NAME_COLOR, friendlyEncodeHTML(name)));
+		pb.append(colorString(FunctionColors.NAME, friendlyEncodeHTML(name)));
 		params.add(pb.toString());
 		return rawTextLength;
 	}

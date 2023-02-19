@@ -45,9 +45,8 @@ public class DataTypeArchiveDB extends DomainObjectAdapterDB
 	 * database schema associated with any of the managers.
 	 * 18-Sep-2008 - version 1 - added fields for synchronizing program data types with project archives.
 	 * 03-Dec-2009 - version 2 - Added source archive updating (consolidating windows.gdt, clib.gdt, ntddk.gdt)
-	 * 14-Nov-2019 - version 3 - Corrected fixed length indexing implementation causing
-	 *                            change in index table low-level storage for newly
-	 *                            created tables. 
+	 * 14-Nov-2019 - version 3 - Corrected fixed length indexing implementation causing change
+	 *                           in index table low-level storage for newly created tables. 
 	 */
 	static final int DB_VERSION = 3;
 
@@ -101,7 +100,7 @@ public class DataTypeArchiveDB extends DomainObjectAdapterDB
 	 */
 	public DataTypeArchiveDB(DomainFolder folder, String name, Object consumer)
 			throws IOException, DuplicateNameException, InvalidNameException {
-		super(new DBHandle(), name, 500, 1000, consumer);
+		super(new DBHandle(), name, 500, consumer);
 		this.name = name;
 
 		recordChanges = false;
@@ -110,17 +109,17 @@ public class DataTypeArchiveDB extends DomainObjectAdapterDB
 			int id = startTransaction("create data type archive");
 
 			createDatabase();
-			if (createManagers(CREATE, TaskMonitorAdapter.DUMMY_MONITOR) != null) {
+			if (createManagers(CREATE, TaskMonitor.DUMMY) != null) {
 				throw new AssertException("Unexpected version exception on create");
 			}
 			changeSet = new DataTypeArchiveDBChangeSet(NUM_UNDOS);
-			initManagers(CREATE, TaskMonitorAdapter.DUMMY_MONITOR);
+			initManagers(CREATE, TaskMonitor.DUMMY);
 			propertiesCreate();
 			endTransaction(id, true);
 			clearUndo(false);
 
 			if (folder != null) {
-				folder.createFile(name, this, TaskMonitorAdapter.DUMMY_MONITOR);
+				folder.createFile(name, this, TaskMonitor.DUMMY);
 			}
 
 			success = true;
@@ -154,9 +153,9 @@ public class DataTypeArchiveDB extends DomainObjectAdapterDB
 	public DataTypeArchiveDB(DBHandle dbh, int openMode, TaskMonitor monitor, Object consumer)
 			throws IOException, VersionException, CancelledException {
 
-		super(dbh, "Untitled", 500, 1000, consumer);
+		super(dbh, "Untitled", 500, consumer);
 		if (monitor == null) {
-			monitor = TaskMonitorAdapter.DUMMY_MONITOR;
+			monitor = TaskMonitor.DUMMY;
 		}
 		boolean success = false;
 		try {
@@ -435,6 +434,7 @@ public class DataTypeArchiveDB extends DomainObjectAdapterDB
 	}
 
 	private void upgradeDatabase() throws IOException {
+
 		table = dbh.getTable(TABLE_NAME);
 		DBRecord record = SCHEMA.createRecord(new StringField(ARCHIVE_DB_VERSION));
 		record.setString(0, Integer.toString(DB_VERSION));
@@ -503,7 +503,8 @@ public class DataTypeArchiveDB extends DomainObjectAdapterDB
 		return versionExc;
 	}
 
-	private void initManagers(int openMode, TaskMonitor monitor) throws CancelledException {
+	private void initManagers(int openMode, TaskMonitor monitor)
+			throws IOException, CancelledException {
 		monitor.checkCanceled();
 		dataTypeManager.setDataTypeArchive(this);
 		dataTypeManager.archiveReady(openMode, monitor);

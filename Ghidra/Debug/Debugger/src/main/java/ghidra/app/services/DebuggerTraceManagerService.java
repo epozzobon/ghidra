@@ -20,40 +20,176 @@ import java.util.concurrent.CompletableFuture;
 
 import ghidra.app.plugin.core.debug.DebuggerCoordinates;
 import ghidra.app.plugin.core.debug.service.tracemgr.DebuggerTraceManagerServicePlugin;
+import ghidra.async.AsyncReference;
 import ghidra.framework.model.DomainFile;
 import ghidra.framework.plugintool.ServiceInfo;
+import ghidra.program.model.listing.Program;
 import ghidra.trace.model.Trace;
+import ghidra.trace.model.guest.TracePlatform;
 import ghidra.trace.model.program.TraceProgramView;
+import ghidra.trace.model.target.TraceObject;
 import ghidra.trace.model.thread.TraceThread;
-import ghidra.trace.model.time.TraceSchedule;
+import ghidra.trace.model.time.schedule.TraceSchedule;
 import ghidra.util.TriConsumer;
 
+/**
+ * The interface for managing open traces and navigating among them and their contents
+ */
 @ServiceInfo(defaultProvider = DebuggerTraceManagerServicePlugin.class)
 public interface DebuggerTraceManagerService {
+
+	/**
+	 * The reason coordinates were activated
+	 */
+	public enum ActivationCause {
+		/**
+		 * The change was driven by the user
+		 * 
+		 * <p>
+		 * TODO: Distinguish between API and GUI?
+		 */
+		USER,
+		/**
+		 * A trace was activated because a recording was started, usually when a target is launched
+		 */
+		START_RECORDING,
+		/**
+		 * The change was driven by the model activation, possibly indirectly by the user
+		 */
+		SYNC_MODEL,
+		/**
+		 * The change was driven by the recorder advancing a snapshot
+		 */
+		FOLLOW_PRESENT,
+		/**
+		 * The tool is activating scratch coordinates to display an emulator state change
+		 */
+		EMU_STATE_EDIT,
+		/**
+		 * The change was caused by a change to the mapper selection, probably indirectly by the
+		 * user
+		 */
+		MAPPER_CHANGED,
+		/**
+		 * Some default coordinates were activated
+		 * 
+		 * <p>
+		 * Please don't misunderstand this as the "default cause." Rather, e.g., when the current
+		 * trace is closed, and the manager needs to activate new coordinates, it is activating
+		 * "default coordinates."
+		 */
+		ACTIVATE_DEFAULT,
+		/**
+		 * The tool is restoring its data state
+		 */
+		RESTORE_STATE,
+	}
+
+	/**
+	 * An adapter that works nicely with an {@link AsyncReference}
+	 * 
+	 * <p>
+	 * TODO: Seems this is still leaking an implementation detail
+	 */
 	public interface BooleanChangeAdapter extends TriConsumer<Boolean, Boolean, Void> {
 		@Override
 		default void accept(Boolean oldVal, Boolean newVal, Void cause) {
 			changed(newVal);
 		}
 
+		/**
+		 * The value has changed
+		 * 
+		 * @param value the new value
+		 */
 		void changed(Boolean value);
 	}
 
+	/**
+	 * Get all the open traces
+	 * 
+	 * @return all open traces
+	 */
 	Collection<Trace> getOpenTraces();
 
+	/**
+	 * Get the current coordinates
+	 * 
+	 * <p>
+	 * This entails everything except the current address.
+	 * 
+	 * @return the current coordinates
+	 */
 	DebuggerCoordinates getCurrent();
 
+	/**
+	 * Get the current coordinates for a given trace
+	 * 
+	 * @param trace the trace
+	 * @return the current coordinates for the trace
+	 */
+	DebuggerCoordinates getCurrentFor(Trace trace);
+
+	/**
+	 * Get the active trace
+	 * 
+	 * @return the active trace, or null
+	 */
 	Trace getCurrentTrace();
 
+	/**
+	 * Get the active platform
+	 * 
+	 * @return the active platform, or null
+	 */
+	TracePlatform getCurrentPlatform();
+
+	/**
+	 * Get the active view
+	 * 
+	 * <p>
+	 * Every trace has an associated variable-snap view. When the manager navigates to a new point
+	 * in time, it is accomplished by changing the snap of this view. This view is suitable for use
+	 * in most places where a {@link Program} is ordinarily required.
+	 * 
+	 * @return the active view, or null
+	 */
 	TraceProgramView getCurrentView();
 
+	/**
+	 * Get the active thread
+	 * 
+	 * <p>
+	 * It is possible to have an active trace, but no active thread.
+	 * 
+	 * @return the active thread, or null
+	 */
 	TraceThread getCurrentThread();
 
-	TraceThread getCurrentThreadFor(Trace trace);
-
+	/**
+	 * Get the active snap
+	 * 
+	 * <p>
+	 * Note that if emulation was used to materialize the current coordinates, then the current snap
+	 * will differ from the view's snap.
+	 * 
+	 * @return the active snap, or 0
+	 */
 	long getCurrentSnap();
 
+	/**
+	 * Get the active frame
+	 * 
+	 * @return the active frame, or 0
+	 */
 	int getCurrentFrame();
+
+	/**
+	 * Get the active object
+	 * 
+	 * @return the active object, or null
+	 */
+	TraceObject getCurrentObject();
 
 	/**
 	 * Open a trace
@@ -105,10 +241,23 @@ public interface DebuggerTraceManagerService {
 	 */
 	CompletableFuture<Void> saveTrace(Trace trace);
 
+	/**
+	 * Close the given trace
+	 * 
+	 * @param trace the trace to close
+	 */
 	void closeTrace(Trace trace);
 
+	/**
+	 * Close all traces
+	 */
 	void closeAllTraces();
 
+	/**
+	 * Close all traces except the given one
+	 * 
+	 * @param keep the trace to keep open
+	 */
 	void closeOtherTraces(Trace keep);
 
 	/**
@@ -120,43 +269,211 @@ public interface DebuggerTraceManagerService {
 	 */
 	void closeDeadTraces();
 
-	void activate(DebuggerCoordinates coordinates);
-
-	void activateTrace(Trace trace);
-
-	void activateThread(TraceThread thread);
-
-	void activateSnap(long snap);
-
-	void activateTime(TraceSchedule time);
-
-	void activateFrame(int frameLevel);
-
-	void setAutoActivatePresent(boolean enabled);
-
-	boolean isAutoActivatePresent();
-
-	void addAutoActivatePresentChangeListener(BooleanChangeAdapter listener);
-
-	void removeAutoActivatePresentChangeListener(BooleanChangeAdapter listener);
+	/**
+	 * Activate the given coordinates with future notification
+	 * 
+	 * <p>
+	 * This operation may be completed asynchronously, esp., if emulation is required to materialize
+	 * the coordinates. The returned future is completed when the coordinates are actually
+	 * materialized and active. The coordinates are "resolved" as a means of filling in missing
+	 * parts. For example, if the thread is not specified, the manager may activate the last-active
+	 * thread for the desired trace.
+	 * 
+	 * @param coordinates the desired coordinates
+	 * @param cause the cause of the activation
+	 * @param syncTarget true synchronize the current target to the same coordinates
+	 * @return a future which completes when emulation and navigation is complete
+	 */
+	CompletableFuture<Void> activateAndNotify(DebuggerCoordinates coordinates,
+			ActivationCause cause, boolean syncTarget);
 
 	/**
-	 * Control whether trace activation is synchronized with debugger focus/select
+	 * Activate the given coordinates, caused by the user
+	 * 
+	 * @see #activate(DebuggerCoordinates, ActivationCause)
+	 * @param coordinates the desired coordinates
+	 */
+	default void activate(DebuggerCoordinates coordinates) {
+		activate(coordinates, ActivationCause.USER);
+	}
+
+	/**
+	 * Activate the given coordinates, synchronizing the current target, if possible
+	 * 
+	 * <p>
+	 * If asynchronous notification is needed, use
+	 * {@link #activateAndNotify(DebuggerCoordinates, boolean)}.
+	 * 
+	 * @param coordinates the desired coordinates
+	 * @param cause the cause of activation
+	 */
+	void activate(DebuggerCoordinates coordinates, ActivationCause cause);
+
+	/**
+	 * Resolve coordinates for the given trace using the manager's "best judgment"
+	 * 
+	 * <p>
+	 * The manager may use a variety of sources of context including the current trace, the last
+	 * coordinates for a trace, the target's last/current activation, the list of live threads, etc.
+	 * 
+	 * @param trace the trace
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolveTrace(Trace trace);
+
+	/**
+	 * Activate the given trace
+	 * 
+	 * @param trace the desired trace
+	 */
+	default void activateTrace(Trace trace) {
+		activate(resolveTrace(trace));
+	}
+
+	/**
+	 * Resolve coordinates for the given platform using the manager's "best judgment"
+	 * 
+	 * @see #resolveTrace(Trace)
+	 * @param platform the platform
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolvePlatform(TracePlatform platform);
+
+	/**
+	 * Activate the given platform
+	 * 
+	 * @param platform the desired platform
+	 */
+	default void activatePlatform(TracePlatform platform) {
+		activate(resolvePlatform(platform));
+	}
+
+	/**
+	 * Resolve coordinates for the given thread using the manager's "best judgment"
+	 * 
+	 * @see #resolveTrace(Trace)
+	 * @param thread the thread
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolveThread(TraceThread thread);
+
+	/**
+	 * Activate the given thread
+	 * 
+	 * @param thread the desired thread
+	 */
+	default void activateThread(TraceThread thread) {
+		activate(resolveThread(thread));
+	}
+
+	/**
+	 * Resolve coordinates for the given snap using the manager's "best judgment"
+	 * 
+	 * @see #resolveTrace(Trace)
+	 * @param snap the snapshot key
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolveSnap(long snap);
+
+	/**
+	 * Activate the given snapshot key
+	 * 
+	 * @param snap the desired snapshot key
+	 */
+	default void activateSnap(long snap) {
+		activate(resolveSnap(snap));
+	}
+
+	/**
+	 * Resolve coordinates for the given time using the manager's "best judgment"
+	 * 
+	 * @see #resolveTrace(Trace)
+	 * @param time the time
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolveTime(TraceSchedule time);
+
+	/**
+	 * Activate the given point in time, possibly invoking emulation
+	 * 
+	 * @param time the desired schedule
+	 */
+	default void activateTime(TraceSchedule time) {
+		activate(resolveTime(time));
+	}
+
+	/**
+	 * Resolve coordinates for the given view using the manager's "best judgment"
+	 * 
+	 * @see #resolveTrace(Trace)
+	 * @param view the view
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolveView(TraceProgramView view);
+
+	/**
+	 * Resolve coordinates for the given frame level using the manager's "best judgment"
+	 * 
+	 * @see #resolveTrace(Trace)
+	 * @param frameLevel the frame level, 0 being the innermost
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolveFrame(int frameLevel);
+
+	/**
+	 * Activate the given stack frame
+	 * 
+	 * @param frameLevel the level of the desired frame, 0 being innermost
+	 */
+	default void activateFrame(int frameLevel) {
+		activate(resolveFrame(frameLevel));
+	}
+
+	/**
+	 * Resolve coordinates for the given object using the manager's "best judgment"
+	 * 
+	 * @see #resolveTrace(Trace)
+	 * @param object the object
+	 * @return the best coordinates
+	 */
+	DebuggerCoordinates resolveObject(TraceObject object);
+
+	/**
+	 * Activate the given object
+	 * 
+	 * @param object the desired object
+	 */
+	default void activateObject(TraceObject object) {
+		activate(resolveObject(object));
+	}
+
+	/**
+	 * Control whether trace activation is synchronized with debugger activation
 	 * 
 	 * @param enabled true to synchronize, false otherwise
 	 */
-	void setSynchronizeFocus(boolean enabled);
+	void setSynchronizeActive(boolean enabled);
 
 	/**
-	 * Check whether trace activation is synchronized with debugger focus/select
+	 * Check whether trace activation is synchronized with debugger activation
 	 * 
 	 * @return true if synchronized, false otherwise
 	 */
-	boolean isSynchronizeFocus();
+	boolean isSynchronizeActive();
 
-	void addSynchronizeFocusChangeListener(BooleanChangeAdapter listener);
+	/**
+	 * Add a listener for changes to activation synchronization enablement
+	 * 
+	 * @param listener the listener to receive change notifications
+	 */
+	void addSynchronizeActiveChangeListener(BooleanChangeAdapter listener);
 
-	void removeSynchronizeFocusChangeListener(BooleanChangeAdapter listener);
+	/**
+	 * Remove a listener for changes to activation synchronization enablement
+	 * 
+	 * @param listener the listener receiving change notifications
+	 */
+	void removeSynchronizeActiveChangeListener(BooleanChangeAdapter listener);
 
 	/**
 	 * Control whether traces should be saved by default
@@ -172,8 +489,18 @@ public interface DebuggerTraceManagerService {
 	 */
 	boolean isSaveTracesByDefault();
 
+	/**
+	 * Add a listener for changes to save-by-default enablement
+	 * 
+	 * @param listener the listener to receive change notifications
+	 */
 	void addSaveTracesByDefaultChangeListener(BooleanChangeAdapter listener);
 
+	/**
+	 * Remove a listener for changes to save-by-default enablement
+	 * 
+	 * @param listener the listener receiving change notifications
+	 */
 	void removeSaveTracesByDefaultChangeListener(BooleanChangeAdapter listener);
 
 	/**
@@ -190,15 +517,44 @@ public interface DebuggerTraceManagerService {
 	 */
 	boolean isAutoCloseOnTerminate();
 
+	/**
+	 * Add a listener for changes to close-on-terminate enablement
+	 * 
+	 * @param listener the listener to receive change notifications
+	 */
 	void addAutoCloseOnTerminateChangeListener(BooleanChangeAdapter listener);
 
+	/**
+	 * Remove a listener for changes to close-on-terminate enablement
+	 * 
+	 * @param listener the listener receiving change notifications
+	 */
 	void removeAutoCloseOnTerminateChangeListener(BooleanChangeAdapter listener);
 
 	/**
-	 * Fill in an incomplete coordinate specification, using the manager's "best judgement"
+	 * If the given coordinates are already materialized, get the snapshot
 	 * 
-	 * @param coords the possibly-incomplete coordinates
-	 * @return the complete resolved coordinates
+	 * <p>
+	 * If the coordinates do not include a schedule, this simply returns the coordinates' snapshot.
+	 * Otherwise, it searches for the first snapshot whose schedule is the coordinates' schedule.
+	 * 
+	 * @param coordinates the coordinates
+	 * @return the materialized snapshot key, or null if not materialized.
 	 */
-	DebuggerCoordinates resolveCoordinates(DebuggerCoordinates coords);
+	Long findSnapshot(DebuggerCoordinates coordinates);
+
+	/**
+	 * Materialize the given coordinates to a snapshot in the same trace
+	 * 
+	 * <p>
+	 * If the given coordinates do not require emulation, then this must complete immediately with
+	 * the snapshot key given by the coordinates. If the given schedule is already materialized in
+	 * the trace, then this may complete immediately with the previously-materialized snapshot key.
+	 * Otherwise, this must invoke emulation, store the result into a chosen snapshot, and complete
+	 * with its key.
+	 * 
+	 * @param coordinates the coordinates to materialize
+	 * @return a future that completes with the snapshot key of the materialized coordinates
+	 */
+	CompletableFuture<Long> materialize(DebuggerCoordinates coordinates);
 }

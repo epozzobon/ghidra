@@ -71,13 +71,20 @@ public class GdbModelTargetBreakpointContainer
 		GdbModelTargetBreakpointSpec spec = getTargetBreakpointSpec(info);
 		spec.init().thenRun(() -> {
 			changeElements(List.of(), List.of(spec), "Created");
+		}).exceptionally(ex -> {
+			model.reportError(this, "Could not update created breakpoint", ex);
+			return null;
 		});
 	}
 
 	@Override
 	public void breakpointModified(GdbBreakpointInfo newInfo, GdbBreakpointInfo oldInfo,
 			GdbCause cause) {
-		getTargetBreakpointSpec(oldInfo).updateInfo(oldInfo, newInfo, "Modified");
+		GdbModelTargetBreakpointSpec spec = getTargetBreakpointSpec(oldInfo);
+		spec.updateInfo(oldInfo, newInfo, "Modified").exceptionally(ex -> {
+			model.reportError(this, "Could not updated modified breakpoint", ex);
+			return null;
+		});
 	}
 
 	protected GdbModelTargetBreakpointLocation breakpointHit(long bpId,
@@ -95,7 +102,7 @@ public class GdbModelTargetBreakpointContainer
 				spec + " (pc=" + frame.getProgramCounter() + ")");
 			//return; // Not ideal, but eb == null should be fine, since the spec holds the actions 
 		}
-		listeners.fire.breakpointHit(this, frame.thread, frame, spec, loc);
+		broadcast().breakpointHit(this, frame.thread, frame, spec, loc);
 		spec.breakpointHit(frame, loc);
 		return loc;
 	}

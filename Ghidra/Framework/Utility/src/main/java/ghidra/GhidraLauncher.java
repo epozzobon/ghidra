@@ -16,6 +16,7 @@
 package ghidra;
 
 import java.io.*;
+import java.lang.reflect.Constructor;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -42,21 +43,53 @@ public class GhidraLauncher {
 	 * @throws Exception If there was a problem launching.  See the exception's message for more
 	 *     details on what went wrong.  
 	 */
-	public static void main(String[] args) throws Exception {
+	public static void launch(String[] args) throws Exception {
 
 		// Initialize the Ghidra environment
 		GhidraApplicationLayout layout = initializeGhidraEnvironment();
-		
-		// Make sure the thing to launch is a GhidraLaunchable
-		Class<?> cls = ClassLoader.getSystemClassLoader().loadClass(args[0]);
+
+		// Make sure the thing to launch meets the criteria:
+		// 1) Class exists
+		// 2) Class implements GhidraLaunchable
+		// 3) Class has a 0-argument constructor
+		Class<?> cls;
+		try {
+			cls = ClassLoader.getSystemClassLoader().loadClass(args[0]);
+		}
+		catch (ClassNotFoundException e) {
+			throw new IllegalArgumentException("\"" + args[0] + "\" class was not found");
+		}
 		if (!GhidraLaunchable.class.isAssignableFrom(cls)) {
 			throw new IllegalArgumentException("\"" + args[0] + "\" is not a launchable class");
+		}
+		Constructor<?> constructor;
+		try {
+			constructor = cls.getConstructor();
+		}
+		catch (NoSuchMethodException e) {
+			throw new IllegalArgumentException(
+				"\"" + args[0] + "\" does not have a 0-argument constructor");
 		}
 
 		// Launch the target class, which is the first argument.  Strip off the first argument
 		// and pass the rest through to the target class's launch method.
-		GhidraLaunchable launchable = (GhidraLaunchable) cls.getConstructor().newInstance();
+		GhidraLaunchable launchable = (GhidraLaunchable) constructor.newInstance();
 		launchable.launch(layout, Arrays.copyOfRange(args, 1, args.length));
+	}
+
+	/**
+	 * Launches the given {@link GhidraLaunchable} specified in the first command line argument
+	 * 
+	 * @param args The first argument is the name of the {@link GhidraLaunchable} to launch.
+	 *   The remaining args get passed through to the class's {@link GhidraLaunchable#launch} 
+	 *   method.
+	 * @throws Exception If there was a problem launching.  See the exception's message for more
+	 *     details on what went wrong. 
+	 * @deprecated Use {@link Ghidra#main(String[])} instead
+	 */
+	@Deprecated(since = "10.1", forRemoval = true)
+	public static void main(String[] args) throws Exception {
+		launch(args);
 	}
 
 	/**
@@ -135,7 +168,6 @@ public class GhidraLauncher {
 
 		// this is each jar file, sorted for loading consistency
 		List<String> jars = findJarsInDir(patchDir);
-		Collections.sort(jars);
 		pathList.addAll(jars);
 	}
 
@@ -190,8 +222,8 @@ public class GhidraLauncher {
 			throw new FileNotFoundException(LIBDEPS + " file was not found!  Please do a prepDev.");
 		}
 
-		// Add the jars to the path list (don't add duplicates)
-		Set<String> pathSet = new HashSet<>();
+		// Add the jars to the path list (don't add duplicates, preserve order)
+		Set<String> pathSet = new LinkedHashSet<>();
 		try (BufferedReader reader =
 			new BufferedReader(new FileReader(libraryDependenciesFile.getFile(false)))) {
 			String line;
@@ -218,21 +250,22 @@ public class GhidraLauncher {
 
 	/**
 	 * Searches the given directory (non-recursively) for jars and returns their paths in a list.
+	 * The paths will be sorted by jar file name.
 	 * 
-	 * @param dir The directory to search for jars in.
-	 * @return A list of discovered jar paths.
+	 * @param dir The directory to search for jars in
+	 * @return A list of discovered jar paths, sorted by jar file name
 	 */
 	public static List<String> findJarsInDir(ResourceFile dir) {
-		List<String> list = new ArrayList<>();
+		Set<ResourceFile> set = new TreeSet<>((a, b) -> a.getName().compareTo(b.getName()));
 		ResourceFile[] names = dir.listFiles();
 		if (names != null) {
 			for (ResourceFile file : names) {
 				if (file.getName().endsWith(".jar")) {
-					list.add(file.getAbsolutePath());
+					set.add(file);
 				}
 			}
 		}
-		return list;
+		return set.stream().map(f -> f.getAbsolutePath()).collect(Collectors.toList());
 	}
 
 	/**

@@ -718,7 +718,7 @@ public class Disassembler implements DisassemblerConflictHandler {
 	}
 
 	/**
-	 * Perform a psuedo-disassembly of an single instruction block only following fall-throughs.
+	 * Perform a pseudo-disassembly of an single instruction block only following fall-throughs.
 	 * WARNING! This method should not be used in conjunction with other disassembly methods
 	 * on the this Disassembler instance.  Disassembler must be instantiated with a Program object.
 	 * @param addr start of block
@@ -738,7 +738,7 @@ public class Disassembler implements DisassemblerConflictHandler {
 	}
 
 	/**
-	 * Perform a psuedo-disassembly of an single instruction block only following fall-throughs.
+	 * Perform a pseudo-disassembly of an single instruction block only following fall-throughs.
 	 * WARNING! This method should not be used in conjunction with other disassembly methods
 	 * on the this Disassembler instance.
 	 * @param blockMemBuffer block memory buffer 
@@ -1387,21 +1387,26 @@ public class Disassembler implements DisassemblerConflictHandler {
 			return;
 		}
 
+		boolean markAsError = true;
+
 		Address flowFrom = conflict.getFlowFromAddress();
 		String flowMsg = flowFrom != null ? (" (flow from " + flowFrom + ")") : "";
 		Address markAddr = address;
 		if (!isBookmarkAllowed(markAddr)) {
 			if (flowFrom != null) {
 				markAddr = flowFrom;
+				if (conflict.getInstructionErrorType() == InstructionErrorType.MEMORY &&
+					address.getOffset() == 0) {
+					markAsError = false;
+				}
 			}
 			else {
 				return;
 			}
 		}
 
-		bmMgr.setBookmark(markAddr, BookmarkType.ERROR, ERROR_BOOKMARK_CATEGORY,
-			conflict.getConflictMessage() + flowMsg);
-
+		bmMgr.setBookmark(markAddr, markAsError ? BookmarkType.ERROR : BookmarkType.WARNING,
+			ERROR_BOOKMARK_CATEGORY, conflict.getConflictMessage() + flowMsg);
 	}
 
 	private boolean isBookmarkAllowed(Address addr) {
@@ -1711,10 +1716,10 @@ public class Disassembler implements DisassemblerConflictHandler {
 	private static class InstructionContext implements ProcessorContext {
 
 		private RegisterValue contextValue;
-		private Language langauge;
+		private Language language;
 
 		InstructionContext(Language language, RegisterValue contextValue) {
-			this.langauge = language;
+			this.language = language;
 			this.contextValue = contextValue;
 		}
 
@@ -1729,12 +1734,12 @@ public class Disassembler implements DisassemblerConflictHandler {
 
 		@Override
 		public List<Register> getRegisters() {
-			return langauge.getRegisters();
+			return language.getRegisters();
 		}
 
 		@Override
 		public Register getRegister(String name) {
-			return langauge.getRegister(name);
+			return language.getRegister(name);
 		}
 
 		@Override

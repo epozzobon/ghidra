@@ -41,7 +41,7 @@ import ghidra.program.util.ProgramChangeRecord;
 import ghidra.test.AbstractGhidraHeadedIntegrationTest;
 import ghidra.util.exception.DuplicateNameException;
 import ghidra.util.exception.InvalidInputException;
-import ghidra.util.task.TaskMonitorAdapter;
+import ghidra.util.task.TaskMonitor;
 
 /**
  *
@@ -75,7 +75,7 @@ public class FunctionDBTest extends AbstractGhidraHeadedIntegrationTest
 		transactionID = program.startTransaction("Test");
 		program.getMemory()
 				.createInitializedBlock("test", addr(100), 500, (byte) 0,
-					TaskMonitorAdapter.DUMMY_MONITOR, false);
+					TaskMonitor.DUMMY, false);
 		functionManager = program.getFunctionManager();
 	}
 
@@ -1261,7 +1261,7 @@ public class FunctionDBTest extends AbstractGhidraHeadedIntegrationTest
 		// delete the typedef data type
 		localTransactionID = program.startTransaction("test");
 		try {
-			program.getDataTypeManager().remove(td, TaskMonitorAdapter.DUMMY_MONITOR);
+			program.getDataTypeManager().remove(td, TaskMonitor.DUMMY);
 		}
 		finally {
 			program.endTransaction(localTransactionID, true);
@@ -1883,13 +1883,15 @@ public class FunctionDBTest extends AbstractGhidraHeadedIntegrationTest
 
 		Function f1 = createFunction("foo1", addr(0x100), new AddressSet(addr(0x100), addr(0x200)));
 		assertTrue(!f1.isThunk());
-		assertNull(f1.getThunkedFunction(false));
+		assertNull(f1.getThunkedFunction(true));
+		assertNull(f1.getFunctionThunkAddresses(true));
 
 		Function f2 = functionManager.createFunction(null, addr(0x300),
 			new AddressSet(addr(0x300), addr(0x400)), SourceType.DEFAULT);
 		assertEquals("FUN_00000300", f2.getName());
 		assertTrue(!f2.isThunk());
-		assertNull(f2.getThunkedFunction(false));
+		assertNull(f2.getThunkedFunction(true));
+		assertNull(f2.getFunctionThunkAddresses(true));
 
 		f1.setReturn(ByteDataType.dataType, VariableStorage.UNASSIGNED_STORAGE,
 			SourceType.USER_DEFINED);
@@ -1933,7 +1935,11 @@ public class FunctionDBTest extends AbstractGhidraHeadedIntegrationTest
 
 		assertEquals("foo1", f2.getName());
 		assertTrue(f2.isThunk());
-		assertEquals(f1, f2.getThunkedFunction(false));
+		assertEquals(f1, f2.getThunkedFunction(true));
+
+		Address[] thunkAddresses = f1.getFunctionThunkAddresses(true);
+		assertNotNull(thunkAddresses);
+		assertArrayEquals(new Address[] { f2.getEntryPoint() }, thunkAddresses);
 
 		assertEquals("byte foo1(int p1, int p2)", f1.getPrototypeString(false, false));
 		assertEquals("byte foo1(int p1, int p2)", f2.getPrototypeString(false, false));// TODO: Not sure what the correct behavior should be?

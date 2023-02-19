@@ -15,6 +15,7 @@
  */
 package agent.dbgmodel.model.impl;
 
+import java.lang.invoke.MethodHandles;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.CompletableFuture;
@@ -32,12 +33,12 @@ import agent.dbgmodel.jna.dbgmodel.DbgModelNative.ModelObjectKind;
 import agent.dbgmodel.jna.dbgmodel.DbgModelNative.TypeKind;
 import agent.dbgmodel.manager.DbgManager2Impl;
 import ghidra.async.AsyncUtils;
-import ghidra.dbg.DebuggerModelListener;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.TargetBreakpointSpec.TargetBreakpointKind;
 import ghidra.dbg.target.TargetBreakpointSpecContainer.TargetBreakpointKindSet;
 import ghidra.dbg.target.TargetExecutionStateful.TargetExecutionState;
+import ghidra.dbg.target.TargetMethod.AnnotatedTargetMethod;
 import ghidra.dbg.target.schema.TargetObjectSchema;
 import ghidra.dbg.util.PathUtils;
 import ghidra.dbg.util.PathUtils.TargetObjectKeyComparator;
@@ -227,7 +228,7 @@ public class DbgModel2TargetObjectImpl extends DefaultTargetObject<TargetObject,
 		}
 		if (value != null && !value.equals("")) {
 			attrs.put(VALUE_ATTRIBUTE_NAME, value);
-			if (!kind.equals(ModelObjectKind.OBJECT_PROPERTY_ACCESSOR)) {
+			if (!Objects.equals(kind, ModelObjectKind.OBJECT_PROPERTY_ACCESSOR)) {
 				synchronized (attributes) {
 					String oldval = (String) attributes.get(DISPLAY_ATTRIBUTE_NAME);
 					String newval = getName() + " : " + value;
@@ -302,6 +303,8 @@ public class DbgModel2TargetObjectImpl extends DefaultTargetObject<TargetObject,
 				String executionType =
 					targetThread.getThread().getExecutingProcessorType().description;
 				attrs.put(TargetEnvironment.ARCH_ATTRIBUTE_NAME, executionType);
+				attrs.putAll(
+					AnnotatedTargetMethod.collectExports(MethodHandles.lookup(), model, proxy));
 			}
 			if (proxy instanceof TargetRegister) {
 				DbgModelTargetObject bank = (DbgModelTargetObject) getParent();
@@ -318,6 +321,27 @@ public class DbgModel2TargetObjectImpl extends DefaultTargetObject<TargetObject,
 			if (proxy instanceof DbgModelTargetTTD) {
 				DbgModelTargetTTD ttd = (DbgModelTargetTTD) proxy;
 				return ttd.init(attrs);
+			}
+			if (proxy instanceof DbgModelTargetDebugContainer) {
+				DbgModelTargetEventContainer events;
+				if (attributes.containsKey("Events")) {
+					events = (DbgModelTargetEventContainer) attributes.get("Events");
+				}
+				else {
+					events =
+						new DbgModelTargetEventContainerImpl((DbgModelTargetDebugContainer) proxy);
+				}
+				attrs.put(events.getName(), events);
+				DbgModelTargetExceptionContainer exceptions;
+				if (attributes.containsKey("Exceptions")) {
+					exceptions = (DbgModelTargetExceptionContainer) attributes.get("Exceptions");
+				}
+				else {
+					exceptions =
+						new DbgModelTargetExceptionContainerImpl(
+							(DbgModelTargetDebugContainer) proxy);
+				}
+				attrs.put(exceptions.getName(), exceptions);
 			}
 		}
 
@@ -387,15 +411,7 @@ public class DbgModel2TargetObjectImpl extends DefaultTargetObject<TargetObject,
 	}
 
 	@Override
-	public void removeListener(DebuggerModelListener l) {
-		listeners.remove(l);
-	}
-
-	@Override
 	public DbgModelTargetSession getParentSession() {
-		if (this instanceof DbgModelTargetSession) {
-			return (DbgModelTargetSession) this;
-		}
 		DbgModelTargetObject test = (DbgModelTargetObject) parent;
 		while (test != null && !(test.getProxy() instanceof DbgModelTargetSession)) {
 			test = (DbgModelTargetObject) test.getParent();

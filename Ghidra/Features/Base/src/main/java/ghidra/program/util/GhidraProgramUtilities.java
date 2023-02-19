@@ -20,10 +20,6 @@ import ghidra.framework.options.Options;
 import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.listing.Program;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-
 public class GhidraProgramUtilities {
 	private GhidraProgramUtilities() {
 	}
@@ -38,21 +34,19 @@ public class GhidraProgramUtilities {
 	}
 
 	/**
-	 * Returns true if the program does not contain the analyzed flag.
+	 * Returns true if the program does not contain the analyzed flag. The assumption is that a
+	 * non-null value means that the user has already made a decision about analyzing.
+	 * 
 	 * @param program the program to check for the property
 	 * @return true if the program does not contain the analyzed flag
 	 */
 	public static boolean shouldAskToAnalyze(Program program) {
-		try {
-			SimpleDateFormat format = new SimpleDateFormat(Program.ANALYSIS_START_DATE_FORMAT);
-			Date analysisStartDate = format.parse(Program.ANALYSIS_START_DATE);
-			Date creationDate = program.getCreationDate();
-			if (creationDate.compareTo(analysisStartDate) < 0) {
-				return false;
-			}
+
+		// no need to ask if the program can't be saved (i.e. read-only)
+		if (program == null || !program.canSave()) {
+			return false;
 		}
-		catch (ParseException e) {
-		}
+
 		Options options = program.getOptions(Program.PROGRAM_INFO);
 		return !options.contains(Program.ANALYZED);
 	}
@@ -94,5 +88,24 @@ public class GhidraProgramUtilities {
 		finally {
 			program.endTransaction(transactionID, true);
 		}
+	}
+
+	/**
+	 * Returns true if the program has been analyzed at least once.
+	 * @param program the program to test to see if it has been analyzed
+	 * @return true if the program has been analyzed at least once.
+	 */
+	public static boolean isAnalyzedFlagSet(Program program) {
+		Options options = program.getOptions(Program.PROGRAM_INFO);
+
+		// we first have to check if the flag has even been created because checking the flag
+		// directly causes it to be created if it doesn't exist and we unfortunately use the 
+		// existence of the flag to know whether or not to ask the user if they want to start 
+		// analysis
+		if (!options.isRegistered(Program.ANALYZED)) {
+			return false;
+		}
+
+		return options.getBoolean(Program.ANALYZED, false);
 	}
 }

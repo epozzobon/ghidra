@@ -20,29 +20,34 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 
+import docking.widgets.fieldpanel.support.BackgroundColorModel;
+import generic.theme.GColor;
 import ghidra.app.util.viewer.listingpanel.ListingBackgroundColorModel;
 import ghidra.app.util.viewer.listingpanel.ListingPanel;
+import ghidra.util.ColorUtils.ColorBlender;
 
 public class MultiBlendedListingBackgroundColorModel implements ListingBackgroundColorModel {
-	private final List<ListingBackgroundColorModel> models = new ArrayList<>();
+	private static final Color COLOR_BACKGROUND = new GColor("color.bg");
 
-	private final List<Color> toBlend = new ArrayList<>();
+	private final List<BackgroundColorModel> models = new ArrayList<>();
+
+	private final ColorBlender blender = new ColorBlender();
 
 	public MultiBlendedListingBackgroundColorModel() {
 	}
 
-	public void addModel(ListingBackgroundColorModel m) {
+	public void addModel(BackgroundColorModel m) {
 		models.add(m);
 	}
 
-	public void removeModel(ListingBackgroundColorModel m) {
+	public void removeModel(BackgroundColorModel m) {
 		models.remove(m);
 	}
 
 	@Override
 	public Color getBackgroundColor(BigInteger index) {
-		toBlend.clear();
-		for (ListingBackgroundColorModel m : models) {
+		blender.clear();
+		for (BackgroundColorModel m : models) {
 			Color c = m.getBackgroundColor(index);
 			if (c == null) {
 				continue;
@@ -50,52 +55,34 @@ public class MultiBlendedListingBackgroundColorModel implements ListingBackgroun
 			if (c.equals(m.getDefaultBackgroundColor())) {
 				continue;
 			}
-			toBlend.add(c);
+			blender.add(c);
 		}
-		int size = toBlend.size();
-		if (size == 0) {
-			return getDefaultBackgroundColor();
-		}
-		if (size == 1) {
-			return toBlend.get(0);
-		}
-		return blend();
-	}
-
-	protected Color blend() {
-		int r = 0;
-		int g = 0;
-		int b = 0;
-		int ta = 0;
-		for (Color c : toBlend) {
-			int a = c.getAlpha();
-			ta += a;
-			r += a * c.getRed();
-			g += a * c.getGreen();
-			b += a * c.getBlue();
-		}
-		return ta == 0 ? getDefaultBackgroundColor() : new Color(r / ta, g / ta, b / ta);
+		return blender.getColor(getDefaultBackgroundColor());
 	}
 
 	@Override
 	public Color getDefaultBackgroundColor() {
 		if (models.isEmpty()) {
-			return Color.WHITE;
+			return COLOR_BACKGROUND;
 		}
 		return models.get(0).getDefaultBackgroundColor();
 	}
 
 	@Override
 	public void setDefaultBackgroundColor(Color c) {
-		for (ListingBackgroundColorModel m : models) {
+		for (BackgroundColorModel m : models) {
 			m.setDefaultBackgroundColor(c);
 		}
 	}
 
 	@Override
 	public void modelDataChanged(ListingPanel listingPanel) {
-		for (ListingBackgroundColorModel m : models) {
-			m.modelDataChanged(listingPanel);
+		for (BackgroundColorModel m : models) {
+			if (!(m instanceof ListingBackgroundColorModel)) {
+				continue;
+			}
+			ListingBackgroundColorModel lm = (ListingBackgroundColorModel) m;
+			lm.modelDataChanged(listingPanel);
 		}
 	}
 }

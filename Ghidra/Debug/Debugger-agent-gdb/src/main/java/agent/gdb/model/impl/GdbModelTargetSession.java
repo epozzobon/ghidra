@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 
 import agent.gdb.manager.*;
 import agent.gdb.manager.impl.*;
+import agent.gdb.manager.impl.cmd.GdbConsoleExecCommand.CompletesWithRunning;
 import agent.gdb.manager.impl.cmd.GdbStateChangeRecord;
 import agent.gdb.manager.reason.GdbReason;
 import ghidra.async.AsyncUtils;
@@ -112,7 +113,7 @@ public class GdbModelTargetSession extends DefaultTargetModelRoot
 
 	protected void getVersion() {
 		impl.gdb.waitForPrompt().thenCompose(__ -> {
-			return impl.gdb.consoleCapture("show version");
+			return impl.gdb.consoleCapture("show version", CompletesWithRunning.CANNOT);
 		}).thenAccept(out -> {
 			debugger = out;
 			changeAttributes(List.of(),
@@ -132,6 +133,9 @@ public class GdbModelTargetSession extends DefaultTargetModelRoot
 
 	@Override
 	public void output(GdbManager.Channel gdbChannel, String out) {
+		if (!valid) {
+			return;
+		}
 		TargetConsole.Channel dbgChannel;
 		switch (gdbChannel) {
 			case STDOUT:
@@ -143,7 +147,7 @@ public class GdbModelTargetSession extends DefaultTargetModelRoot
 			default:
 				throw new AssertionError();
 		}
-		listeners.fire.consoleOutput(this, dbgChannel, out);
+		broadcast().consoleOutput(this, dbgChannel, out);
 	}
 
 	@Override
@@ -209,7 +213,9 @@ public class GdbModelTargetSession extends DefaultTargetModelRoot
 			CmdLineParser.tokenize(TargetCmdLineLauncher.PARAMETER_CMDLINE_ARGS.get(args));
 		Boolean useStarti = GdbModelTargetInferior.PARAMETER_STARTI.get(args);
 		return impl.gateFuture(impl.gdb.availableInferior().thenCompose(inf -> {
-			return GdbModelImplUtils.launch(impl, inf, cmdLineArgs, useStarti);
+			return GdbModelImplUtils.launch(inf, cmdLineArgs, useStarti, () -> {
+				return inferiors.getTargetInferior(inf).environment.refreshInternal();
+			});
 		}).thenApply(__ -> null));
 	}
 
@@ -231,7 +237,7 @@ public class GdbModelTargetSession extends DefaultTargetModelRoot
 		//return impl.gdb.interrupt();
 		try {
 			impl.gdb.sendInterruptNow();
-			impl.gdb.cancelCurrentCommand();
+			//impl.gdb.cancelCurrentCommand();
 		}
 		catch (IOException e) {
 			Msg.error(this, "Could not interrupt", e);
@@ -258,7 +264,8 @@ public class GdbModelTargetSession extends DefaultTargetModelRoot
 		 * or be used as an example for other implementations.
 		 */
 		if (!PathUtils.isAncestor(this.getPath(), obj.getPath())) {
-			throw new DebuggerIllegalArgumentException("Can only focus a successor of the scope");
+			throw new DebuggerIllegalArgumentException(
+				"Can only activate a successor of the scope");
 		}
 		TargetObject cur = obj;
 		while (cur != null) {

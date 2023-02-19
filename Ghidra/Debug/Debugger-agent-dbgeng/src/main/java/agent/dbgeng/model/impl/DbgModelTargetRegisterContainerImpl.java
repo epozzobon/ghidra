@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import agent.dbgeng.manager.*;
+import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.manager.impl.DbgRegister;
 import agent.dbgeng.model.iface2.*;
 import ghidra.async.AsyncUtils;
@@ -55,10 +56,12 @@ public class DbgModelTargetRegisterContainerImpl extends DbgModelTargetObjectImp
 		super(thread.getModel(), thread, "Registers", "RegisterContainer");
 		this.thread = thread.getThread();
 
-		requestElements(false);
-		changeAttributes(List.of(), List.of(), Map.of( //
-			TargetRegisterBank.DESCRIPTIONS_ATTRIBUTE_NAME, this //
-		), "Initialized");
+		if (!getModel().isSuppressDescent()) {
+			requestElements(false);
+			changeAttributes(List.of(), List.of(), Map.of( //
+				TargetRegisterBank.DESCRIPTIONS_ATTRIBUTE_NAME, this //
+			), "Initialized");
+		}
 	}
 
 	@Override
@@ -126,29 +129,20 @@ public class DbgModelTargetRegisterContainerImpl extends DbgModelTargetObjectImp
 			Map<String, byte[]> result = new LinkedHashMap<>();
 			for (DbgRegister dbgReg : vals.keySet()) {
 				DbgModelTargetRegister reg = getTargetRegister(dbgReg);
-				String oldval = (String) reg.getCachedAttributes().get(VALUE_ATTRIBUTE_NAME);
 				BigInteger value = vals.get(dbgReg);
 				byte[] bytes = ConversionUtils.bigIntegerToBytes(dbgReg.getSize(), value);
 				result.put(dbgReg.getName(), bytes);
-				reg.changeAttributes(List.of(), Map.of( //
-					VALUE_ATTRIBUTE_NAME, value.toString(16) //
-				), "Refreshed");
-				if (value.longValue() != 0) {
-					String newval = reg.getName() + " : " + value.toString(16);
-					reg.changeAttributes(List.of(), Map.of( //
-						DISPLAY_ATTRIBUTE_NAME, newval //
-					), "Refreshed");
-					reg.setModified(!value.toString(16).equals(oldval));
-				}
+				changeAttrs(reg, value);
 			}
 			this.values = result;
-			listeners.fire.registersUpdated(getProxy(), result);
+			broadcast().registersUpdated(getProxy(), result);
 			return result;
 		}));
 	}
 
 	@Override
 	public CompletableFuture<Void> writeRegistersNamed(Map<String, byte[]> values) {
+		DbgManagerImpl manager = getManager();
 		return model.gateFuture(thread.listRegisters().thenCompose(regs -> {
 			return requestElements(false);
 		}).thenCompose(__ -> {
@@ -162,14 +156,29 @@ public class DbgModelTargetRegisterContainerImpl extends DbgModelTargetObjectImp
 				}
 				BigInteger val = new BigInteger(1, ent.getValue());
 				toWrite.put(reg.getRegister(), val);
+				changeAttrs(reg, val);
 			}
 			return thread.writeRegisters(toWrite);
 			// TODO: Should probably filter only effective and normalized writes in the callback
 		}).thenAccept(__ -> {
-			listeners.fire.registersUpdated(getProxy(), values);
+			manager.getEventListeners().fire.threadStateChanged(thread, thread.getState(),
+				DbgCause.Causes.UNCLAIMED, DbgReason.Reasons.NONE);
+			broadcast().registersUpdated(getProxy(), values);
 		}));
 	}
 
+	private void changeAttrs(DbgModelTargetRegister reg, BigInteger value) {
+		String oldval = (String) reg.getCachedAttributes().get(VALUE_ATTRIBUTE_NAME);
+		String newval = (value.longValue() == 0) ? reg.getName()
+				: reg.getName() + " : " + value.toString(16);
+		reg.changeAttributes(List.of(), Map.of( //
+			VALUE_ATTRIBUTE_NAME, value.toString(16), //
+			DISPLAY_ATTRIBUTE_NAME, newval //
+		), "Refreshed");
+		reg.setModified(!value.toString(16).equals(oldval));
+	}
+
+	@Override
 	public Map<String, byte[]> getCachedRegisters() {
 		return values;
 	}

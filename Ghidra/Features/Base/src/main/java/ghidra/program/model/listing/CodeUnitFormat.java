@@ -21,7 +21,6 @@ import ghidra.app.util.NamespaceUtils;
 import ghidra.app.util.viewer.field.CommentUtils;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
-import ghidra.program.model.lang.InstructionPrototype;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.CodeUnitFormatOptions.ShowBlockName;
 import ghidra.program.model.listing.CodeUnitFormatOptions.ShowNamespace;
@@ -212,7 +211,6 @@ public class CodeUnitFormat {
 
 		Program program = cu.getProgram();
 		Instruction instr = (Instruction) cu;
-		InstructionPrototype proto = instr.getPrototype();
 
 		if (!program.getLanguage().supportsPcode()) {
 			// Formatted mark-up only supported for languages which support PCode
@@ -220,8 +218,7 @@ public class CodeUnitFormat {
 		}
 
 		// Get raw representation list and map of registers contained within it
-		ArrayList<Object> representationList =
-			proto.getOpRepresentationList(opIndex, instr.getInstructionContext());
+		List<Object> representationList = instr.getDefaultOperandRepresentationList(opIndex);
 		if (representationList == null) {
 			return new OperandRepresentationList("<BAD-Instruction>");
 		}
@@ -1032,7 +1029,7 @@ public class CodeUnitFormat {
 		DataType dataType = data.getDataType();
 		int length = data.getLength();
 
-		if (length < dataType.getLength()) {
+		if ((length != 0 || !dataType.isZeroLength()) && dataType.getLength() > length) {
 			representationList.add("Data type \"" + dataType.getDisplayName() +
 				"\" is too big for available space. Size = " + dataType.getLength() +
 				" bytes, available = " + length + " bytes");
@@ -1077,12 +1074,27 @@ public class CodeUnitFormat {
 				representationList.setHasError(true);
 			}
 		}
-		representationList.add(dataType.getRepresentation(data, data, length));
+
 		representationList.setPrimaryReferenceHidden(ref != null);
+
 		if (data.isDefined() && dataValue == null) {
+			DataType baseDt = dataType;
+			if (baseDt instanceof TypeDef) {
+				baseDt = ((TypeDef) dataType).getBaseDataType();
+			}
+			if (baseDt instanceof Pointer) {
+				// Render pointer error
+				PointerDataType.getAddressValue(data, baseDt.getLength(), data,
+					m -> representationList.add(m));
+			}
 			representationList.setHasError(true);
 		}
-		else if ((dataValue instanceof Address) && ref == null &&
+
+		if (representationList.isEmpty()) {
+			representationList.add(dataType.getRepresentation(data, data, length));
+		}
+
+		if ((dataValue instanceof Address) && ref == null &&
 			data.getProgram().getMemory().getBlock((Address) dataValue) == null) {
 			representationList.setHasError(true);
 		}
@@ -1169,11 +1181,36 @@ public class CodeUnitFormat {
 			}
 		}
 
+		if (ref.isMemoryReference() && (ref instanceof OffsetReference)) {
+			return getOffsetReferenceRepresentation(cu, (OffsetReference) ref);
+		}
+
 		if (ref.isMemoryReference() || ref.isExternalReference()) {
 			return getMemoryReferenceLabel(cu, ref);
 		}
+
 		return null;
 
+	}
+
+	private Object getOffsetReferenceRepresentation(CodeUnit cu, OffsetReference offsetRef) {
+		Reference baseRef =
+			new MemReferenceImpl(offsetRef.getFromAddress(), offsetRef.getBaseAddress(),
+				RefType.DATA,
+				offsetRef.getSource(), offsetRef.getOperandIndex(), offsetRef.isPrimary());
+		Object baseRefObj = getMemoryReferenceLabel(cu, baseRef);
+		long offset = offsetRef.getOffset();
+		String sign = "+";
+		if (offset < 0) {
+			offset = -offset;
+			sign = "-";
+		}
+		Scalar offsetScalar = new Scalar(64, offsetRef.getOffset(), true);
+		OperandRepresentationList list = new OperandRepresentationList();
+		list.add(baseRefObj);
+		list.add(sign);
+		list.add(offsetScalar);
+		return list;
 	}
 
 	/**

@@ -21,6 +21,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import db.*;
 import ghidra.app.util.task.OpenProgramTask;
+import ghidra.app.util.task.OpenProgramTask.OpenProgramRequest;
 import ghidra.feature.vt.api.correlator.program.ImpliedMatchProgramCorrelator;
 import ghidra.feature.vt.api.correlator.program.ManualMatchProgramCorrelator;
 import ghidra.feature.vt.api.impl.*;
@@ -36,7 +37,8 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.listing.Program;
 import ghidra.util.Msg;
 import ghidra.util.exception.*;
-import ghidra.util.task.*;
+import ghidra.util.task.TaskLauncher;
+import ghidra.util.task.TaskMonitor;
 
 public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTChangeManager {
 	private final static Field[] COL_FIELDS = new Field[] { StringField.INSTANCE };
@@ -61,7 +63,7 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 	 * database schema associated with any of the adapters.
 	 * 14-Nov-2019 - version 2 - Corrected fixed length indexing implementation causing
 	 *                           change in index table low-level storage for newly
-	 *                           created tables. 
+	 *                           created tables.
 	 */
 	private static final int DB_VERSION = 2;
 
@@ -210,7 +212,7 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 	}
 
 	private VTSessionDB(DBHandle dbHandle, Object consumer) {
-		super(dbHandle, UNUSED_DEFAULT_NAME, EVENT_NOTIFICATION_DELAY, EVENT_BUFFER_SIZE, consumer);
+		super(dbHandle, UNUSED_DEFAULT_NAME, EVENT_NOTIFICATION_DELAY, consumer);
 		propertyTable = dbHandle.getTable(PROPERTY_TABLE_NAME);
 	}
 
@@ -287,6 +289,8 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 			throw new RuntimeException(buffer.toString());
 		}
 
+		associationManager.sessionInitialized();
+
 		try {
 			addSynchronizedDomainObject(destinationProgram);
 		}
@@ -306,7 +310,8 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 
 		TaskLauncher.launch(openTask);
 
-		return openTask.getOpenProgram();
+		OpenProgramRequest openProgram = openTask.getOpenProgram();
+		return openProgram != null ? openProgram.getProgram() : null;
 	}
 
 	@Override
@@ -324,9 +329,6 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 		}
 	}
 
-	/**
-	 * @see ghidra.framework.data.DomainObjectAdapterDB#clearCache()
-	 */
 	@Override
 	protected void clearCache(boolean all) {
 		lock.acquire();
@@ -354,7 +356,7 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 	@Override
 	public void save() throws IOException {
 		try {
-			save(DESTINATION_PROGRAM_ID_PROPERTY_KEY, TaskMonitorAdapter.DUMMY_MONITOR);
+			save(DESTINATION_PROGRAM_ID_PROPERTY_KEY, TaskMonitor.DUMMY);
 		}
 		catch (CancelledException e) {
 			// can't happen because we are using a dummy monitor
@@ -476,7 +478,7 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 		return associationManager;
 	}
 
-	/** Package-level methods for accessing DB-related manager */
+	/* Package-level methods for accessing DB-related manager */
 	public AssociationDatabaseManager getAssociationManagerDBM() {
 		return associationManager;
 	}
@@ -508,9 +510,6 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 
 	@Override
 	public void setChanged(int type, Object oldValue, Object newValue) {
-//        if (recordChanges) {
-//        	updateChangeSet(newstart, newend);
-//        }
 		changed = true;
 
 		fireEvent(new VersionTrackingChangeRecord(type, null, oldValue, newValue));
@@ -528,9 +527,6 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 	@Override
 	public void setObjectChanged(int type, Object affectedObject, Object oldValue,
 			Object newValue) {
-//        if (recordChanges) {
-//        	updateChangeSet(newstart, newend);
-//        }
 		changed = true;
 
 		fireEvent(new VersionTrackingChangeRecord(type, affectedObject, oldValue, newValue));
@@ -716,4 +712,9 @@ public class VTSessionDB extends DomainObjectAdapterDB implements VTSession, VTC
 		associationManager.removeAssociationHook(hook);
 	}
 
+	@Override
+	protected void close() {
+		associationManager.dispose();
+		super.close();
+	}
 }

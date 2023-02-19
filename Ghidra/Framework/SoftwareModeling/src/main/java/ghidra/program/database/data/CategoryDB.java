@@ -259,7 +259,7 @@ class CategoryDB extends DatabaseObject implements Category {
 		try {
 			checkDeleted();
 			if (!getCategoryPath().equals(dt.getCategoryPath())) {
-				dt = dt.clone(dt.getDataTypeManager());
+				dt = dt.clone(mgr);
 				try {
 					dt.setCategoryPath(getCategoryPath());
 				}
@@ -540,7 +540,7 @@ class CategoryDB extends DatabaseObject implements Category {
 				return;
 			}
 			if (existing != null) {
-				ConflictResult result = mgr.resolveConflict(handler, movedDataType, existing);
+				ConflictResult result = handler.resolveConflict(movedDataType, existing);
 				if (result == ConflictResult.REPLACE_EXISTING) { // replace existing dt with new dt.
 					mgr.replaceDataType(existing, movedDataType, true);
 				}

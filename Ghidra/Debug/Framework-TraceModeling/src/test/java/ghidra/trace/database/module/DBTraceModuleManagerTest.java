@@ -15,19 +15,16 @@
  */
 package ghidra.trace.database.module;
 
-import static ghidra.lifecycle.Unfinished.TODO;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 import java.io.File;
 import java.util.*;
 
 import org.junit.*;
 
-import com.google.common.collect.Range;
-
 import ghidra.test.AbstractGhidraHeadlessIntegrationTest;
 import ghidra.trace.database.ToyDBTraceBuilder;
+import ghidra.trace.model.Lifespan;
 import ghidra.trace.model.modules.TraceModule;
 import ghidra.trace.model.modules.TraceSection;
 import ghidra.util.database.UndoableTransaction;
@@ -51,9 +48,9 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 	@Test
 	public void testAddModule() throws Exception {
 		try (UndoableTransaction tid = b.startTransaction()) {
-			moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			moduleManager.addLoadedModule("second", "second",
+			moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			moduleManager.addLoadedModule("Modules[second]", "second",
 				b.range(0x7f400000, 0x7f60002f), 0);
 		}
 	}
@@ -61,13 +58,13 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 	@Test
 	public void testAddSections() throws Exception {
 		try (UndoableTransaction tid = b.startTransaction()) {
-			TraceModule mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
-			mod1.addSection(".data", b.range(0x00600000, 0x0060002f));
+			TraceModule mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			mod1.addSection("Modules[first].Sections[.text]", b.range(0x00401000, 0x00401f9f));
+			mod1.addSection("Modules[first].Sections[.data]", b.range(0x00600000, 0x0060002f));
 
-			moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(0L, 10L));
+			moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(0, 10));
 		}
 	}
 
@@ -78,13 +75,13 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod1;
 		TraceModule mod2;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
-			mod1.addSection(".data", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			mod1.addSection("Modules[first].Sections[.text]", b.range(0x00401000, 0x00401f9f));
+			mod1.addSection("Modules[first].Sections[.data]", b.range(0x00600000, 0x0060002f));
 
-			mod2 = moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(0L, 10L));
+			mod2 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(0, 10));
 		}
 		assertEquals(Set.of(mod1, mod2), new HashSet<>(moduleManager.getAllModules()));
 	}
@@ -97,26 +94,27 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod2;
 		TraceModule mod3;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
-			mod1.addSection(".data", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			mod1.addSection("Modules[first].Sections[.text]", b.range(0x00401000, 0x00401f9f));
+			mod1.addSection("Modules[first].Sections[.data]", b.range(0x00600000, 0x0060002f));
 
-			mod2 = moduleManager.addModule("second", "second",
-				b.range(0x7e400000, 0x7e60002f), Range.closed(0L, 10L));
-			mod3 = moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(11L, 20L));
+			mod2 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7e400000, 0x7e60002f), Lifespan.span(0, 10));
+			mod3 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(11, 20));
 		}
-		assertEquals(Set.of(mod1), new HashSet<>(moduleManager.getModulesByPath("first")));
-		assertEquals(Set.of(mod2, mod3), new HashSet<>(moduleManager.getModulesByPath("second")));
+		assertEquals(Set.of(mod1), new HashSet<>(moduleManager.getModulesByPath("Modules[first]")));
+		assertEquals(Set.copyOf(List.of(mod2, mod3)), // Same in object mode
+			Set.copyOf(moduleManager.getModulesByPath("Modules[second]")));
 	}
 
 	@Test
 	public void testModuleGetTrace() throws Exception {
 		TraceModule mod1;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
 		}
 		assertEquals(b.trace, mod1.getTrace());
 	}
@@ -125,8 +123,8 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 	public void testModuleSetGetName() throws Exception {
 		TraceModule mod1;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
 			assertEquals("first", mod1.getName());
 
 			mod1.setName("FIRST");
@@ -139,8 +137,8 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		// TODO: Should adjusting the base shift the sections?
 		TraceModule mod1;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
 			assertEquals(b.addr(0x00400000), mod1.getBase());
 
 			mod1.setBase(b.addr(0x00400100)); // Cannot exceed current max
@@ -152,21 +150,21 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 	public void testModuleSetGetLifespan() throws Exception {
 		TraceModule mod1;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			assertEquals(Range.closed(0L, 10L), mod1.getLifespan());
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			assertEquals(Lifespan.span(0, 10), mod1.getLifespan());
 			assertEquals(0, mod1.getLoadedSnap());
 			assertEquals(10, mod1.getUnloadedSnap());
 
-			mod1.setLifespan(Range.closed(1L, 11L));
-			assertEquals(Range.closed(1L, 11L), mod1.getLifespan());
+			mod1.setLifespan(Lifespan.span(1, 11));
+			assertEquals(Lifespan.span(1, 11), mod1.getLifespan());
 			assertEquals(1, mod1.getLoadedSnap());
 			assertEquals(11, mod1.getUnloadedSnap());
 
 			mod1.setLoadedSnap(2);
-			assertEquals(Range.closed(2L, 11L), mod1.getLifespan());
+			assertEquals(Lifespan.span(2, 11), mod1.getLifespan());
 			mod1.setUnloadedSnap(4);
-			assertEquals(Range.closed(2L, 4L), mod1.getLifespan());
+			assertEquals(Lifespan.span(2, 4), mod1.getLifespan());
 		}
 	}
 
@@ -179,15 +177,19 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceSection s2text;
 		TraceSection s2data;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			s1text = mod1.addSection("first[.text]", b.range(0x00401000, 0x00401f9f));
-			s1data = mod1.addSection("first[.data]", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			s1text =
+				mod1.addSection("Modules[first].Sections[.text]", b.range(0x00401000, 0x00401f9f));
+			s1data =
+				mod1.addSection("Modules[first].Sections[.data]", b.range(0x00600000, 0x0060002f));
 
-			mod2 = moduleManager.addModule("second", "second",
-				b.range(0x7e400000, 0x7e60002f), Range.closed(0L, 10L));
-			s2text = mod2.addSection("second[.text]", b.range(0x7f401000, 0x7f401fa0));
-			s2data = mod2.addSection("second[.data]", b.range(0x7f600000, 0x7f60002f));
+			mod2 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7e400000, 0x7e60002f), Lifespan.span(0, 10));
+			s2text =
+				mod2.addSection("Modules[second].Sections[.text]", b.range(0x7f401000, 0x7f401fa0));
+			s2data =
+				mod2.addSection("Modules[second].Sections[.data]", b.range(0x7f600000, 0x7f60002f));
 		}
 		assertEquals(Set.of(s1text, s1data), new HashSet<>(mod1.getSections()));
 		assertEquals(Set.of(s2text, s2data), new HashSet<>(mod2.getSections()));
@@ -202,15 +204,19 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceSection s2text;
 		TraceSection s2data;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			s1text = mod1.addSection("first[.text]", ".text", b.range(0x00401000, 0x00401f9f));
-			s1data = mod1.addSection("first[.data]", ".data", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			s1text = mod1.addSection("Modules[first].Sections[.text]", ".text",
+				b.range(0x00401000, 0x00401f9f));
+			s1data = mod1.addSection("Modules[first].Sections[.data]", ".data",
+				b.range(0x00600000, 0x0060002f));
 
-			mod2 = moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(0L, 10L));
-			s2text = mod2.addSection("second[.text]", ".text", b.range(0x7f401000, 0x7f401f9f));
-			s2data = mod2.addSection("second[.data]", ".data", b.range(0x7f600000, 0x7f60002f));
+			mod2 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(0, 10));
+			s2text = mod2.addSection("Modules[second].Sections[.text]", ".text",
+				b.range(0x7f401000, 0x7f401f9f));
+			s2data = mod2.addSection("Modules[second].Sections[.data]", ".data",
+				b.range(0x7f600000, 0x7f60002f));
 		}
 		assertEquals(s1text, mod1.getSectionByName(".text"));
 		assertEquals(s1data, mod1.getSectionByName(".data"));
@@ -223,13 +229,13 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod1;
 		TraceModule mod2;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
-			mod1.addSection(".data", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			mod1.addSection("Modules[first].Sections[.text]", b.range(0x00401000, 0x00401f9f));
+			mod1.addSection("Modules[first].Sections[.data]", b.range(0x00600000, 0x0060002f));
 
-			mod2 = moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(0L, 10L));
+			mod2 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(0, 10));
 		}
 
 		try (UndoableTransaction tid = b.startTransaction()) {
@@ -244,9 +250,10 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod1;
 		TraceSection s1text;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			s1text = mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			s1text =
+				mod1.addSection("Modules[first].Sections[.text]", b.range(0x00401000, 0x00401f9f));
 		}
 
 		assertEquals(mod1, s1text.getModule());
@@ -257,9 +264,10 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod1;
 		TraceSection s1text;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			s1text = mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			s1text = mod1.addSection("Modules[first].Sections[.text]", ".text",
+				b.range(0x00401000, 0x00401f9f));
 
 			assertEquals(".text", s1text.getName());
 			s1text.setName("_TEXT");
@@ -272,9 +280,10 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod1;
 		TraceSection s1text;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			s1text = mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			s1text = mod1.addSection("Modules[first].Sections[.text]", ".text",
+				b.range(0x00401000, 0x00401f9f));
 		}
 
 		assertEquals(b.range(0x00401000, 0x00401f9f), s1text.getRange());
@@ -293,54 +302,54 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod1;
 		TraceModule mod2;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
-			mod1.addSection(".data", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			mod1.addSection("Modules[first].Sections[.text]", ".text",
+				b.range(0x00401000, 0x00401f9f));
+			mod1.addSection("Modules[first].Sections[.data]", ".data",
+				b.range(0x00600000, 0x0060002f));
 
-			mod2 = moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(1L, 11L));
+			mod2 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(1, 11));
 		}
 
 		File tmp = b.save();
 		try (ToyDBTraceBuilder b = new ToyDBTraceBuilder(tmp)) {
 			DBTraceModuleManager moduleManager = b.trace.getModuleManager();
 
-			mod1 = assertOne(moduleManager.getModulesByPath("first"));
-			mod2 = assertOne(moduleManager.getModulesByPath("second"));
+			mod1 = assertOne(moduleManager.getModulesByPath("Modules[first]"));
+			mod2 = assertOne(moduleManager.getModulesByPath("Modules[second]"));
 			TraceSection s1text = mod1.getSectionByName(".text");
 			TraceSection s1data = mod1.getSectionByName(".data");
 
 			assertEquals(b.addr(0x00400000), mod1.getBase());
-			assertEquals(Range.closed(0L, 10L), mod1.getLifespan());
+			assertEquals(Lifespan.span(0, 10), mod1.getLifespan());
 			assertEquals(b.addr(0x7f400000), mod2.getBase());
-			assertEquals(Range.closed(1L, 11L), mod2.getLifespan());
+			assertEquals(Lifespan.span(1, 11), mod2.getLifespan());
 			assertEquals(b.range(0x00401000, 0x00401f9f), s1text.getRange());
 			assertEquals(b.range(0x00600000, 0x0060002f), s1data.getRange());
 		}
 	}
 
 	@Test
-	@Ignore("GP-479")
 	public void testUndoIdentitiesPreserved() throws Exception {
 		TraceModule mod1;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
-			mod1.addSection(".data", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			mod1.addSection("Modules[first].Sections[.text]", b.range(0x00401000, 0x00401f9f));
+			mod1.addSection("Modules[first].Sections[.data]", b.range(0x00600000, 0x0060002f));
 		}
 
 		try (UndoableTransaction tid = b.startTransaction()) {
-			moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(1L, 11L));
+			moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(1, 11));
 		}
 
 		b.trace.undo();
 
-		assertEquals(mod1, assertOne(moduleManager.getModulesByPath("first")));
-		TODO(); // TODO: mod1 should still be identical to that in database
-		assertTrue(moduleManager.getModulesByPath("second").isEmpty());
+		assertSame(mod1, assertOne(moduleManager.getModulesByPath("Modules[first]")));
+		assertTrue(moduleManager.getModulesByPath("Modules[second]").isEmpty());
 	}
 
 	@Test
@@ -348,13 +357,15 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		TraceModule mod1;
 		TraceModule mod2;
 		try (UndoableTransaction tid = b.startTransaction()) {
-			mod1 = moduleManager.addModule("first", "first",
-				b.range(0x00400000, 0x0060002f), Range.closed(0L, 10L));
-			mod1.addSection(".text", b.range(0x00401000, 0x00401f9f));
-			mod1.addSection(".data", b.range(0x00600000, 0x0060002f));
+			mod1 = moduleManager.addModule("Modules[first]", "first",
+				b.range(0x00400000, 0x0060002f), Lifespan.span(0, 10));
+			mod1.addSection("Modules[first].Sections[.text]", ".text",
+				b.range(0x00401000, 0x00401f9f));
+			mod1.addSection("Modules[first].Sections[.data]", ".data",
+				b.range(0x00600000, 0x0060002f));
 
-			mod2 = moduleManager.addModule("second", "second",
-				b.range(0x7f400000, 0x7f60002f), Range.closed(1L, 11L));
+			mod2 = moduleManager.addModule("Modules[second]", "second",
+				b.range(0x7f400000, 0x7f60002f), Lifespan.span(1, 11));
 		}
 
 		b.trace.undo();
@@ -363,15 +374,15 @@ public class DBTraceModuleManagerTest extends AbstractGhidraHeadlessIntegrationT
 		b.trace.redo();
 
 		// NOTE: Because undo actually removes them, module identity may not be preserved
-		mod1 = assertOne(moduleManager.getModulesByPath("first"));
-		mod2 = assertOne(moduleManager.getModulesByPath("second"));
+		mod1 = assertOne(moduleManager.getModulesByPath("Modules[first]"));
+		mod2 = assertOne(moduleManager.getModulesByPath("Modules[second]"));
 		TraceSection s1text = mod1.getSectionByName(".text");
 		TraceSection s1data = mod1.getSectionByName(".data");
 
 		assertEquals(b.addr(0x00400000), mod1.getBase());
-		assertEquals(Range.closed(0L, 10L), mod1.getLifespan());
+		assertEquals(Lifespan.span(0, 10), mod1.getLifespan());
 		assertEquals(b.addr(0x7f400000), mod2.getBase());
-		assertEquals(Range.closed(1L, 11L), mod2.getLifespan());
+		assertEquals(Lifespan.span(1, 11), mod2.getLifespan());
 		assertEquals(b.range(0x00401000, 0x00401f9f), s1text.getRange());
 		assertEquals(b.range(0x00600000, 0x0060002f), s1data.getRange());
 	}

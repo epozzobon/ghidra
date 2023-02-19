@@ -27,11 +27,13 @@ import org.jdom.Element;
 import org.jdom.input.SAXBuilder;
 import org.jdom.output.XMLOutputter;
 
-import docking.framework.*;
+import docking.framework.ApplicationInformationDisplayFactory;
+import docking.framework.DockingApplicationConfiguration;
+import generic.application.GenericApplicationLayout;
 import ghidra.framework.*;
 import ghidra.framework.model.ToolServices;
 import ghidra.util.Msg;
-import ghidra.util.SystemUtilities;
+import ghidra.util.Swing;
 import ghidra.util.classfinder.ClassSearcher;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.xml.GenericXMLOutputter;
@@ -56,27 +58,27 @@ public abstract class StandAloneApplication implements GenericStandAloneApplicat
 	 * {@link ApplicationProperties#APPLICATION_NAME_PROPERTY} and
 	 * {@link ApplicationProperties#APPLICATION_VERSION_PROPERTY} properties
 	 * set.</b>
-	 * 
+	 *
 	 * @param propertiesFilename the name of the properties file.
 	 * @throws IOException error causing application initialization failure
 	 */
 	public StandAloneApplication(String propertiesFilename) throws IOException {
-		this(new DockingApplicationLayout(readApplicationProperties(propertiesFilename)));
+		this(new GenericApplicationLayout(readApplicationProperties(propertiesFilename)));
 	}
 
 	/**
-	 * Creates a new application using the specified application name 
+	 * Creates a new application using the specified application name
 	 * and version.
 	 * @param name application name
 	 * @param version application version
 	 * @throws IOException error causing application initialization failure
 	 */
 	public StandAloneApplication(String name, String version) throws IOException {
-		this(new DockingApplicationLayout(name, version));
+		this(new GenericApplicationLayout(name, version));
 	}
 
 	/**
-	 * reates a new application using the given application layout
+	 * Creates a new application using the given application layout
 	 * and associated application properties.
 	 * @param applicationLayout application layout
 	 */
@@ -146,7 +148,7 @@ public abstract class StandAloneApplication implements GenericStandAloneApplicat
 
 		Application.initializeApplication(layout, configuration);
 		try {
-			ClassSearcher.search(false, configuration.getTaskMonitor());
+			ClassSearcher.search(configuration.getTaskMonitor());
 		}
 		catch (CancelledException e) {
 			Msg.debug(this, "Class searching unexpectedly cancelled.");
@@ -155,7 +157,7 @@ public abstract class StandAloneApplication implements GenericStandAloneApplicat
 		setDockIcon();
 
 		try {
-			SystemUtilities.runSwingNow(() -> tool = createTool());
+			Swing.runNow(() -> tool = createTool());
 		}
 		catch (Exception e) {
 			Msg.error(this, "Error creating tool, exiting...", e);
@@ -201,6 +203,7 @@ public abstract class StandAloneApplication implements GenericStandAloneApplicat
 
 	protected void initializeTool(StandAlonePluginTool newTool) {
 		newTool.addExitAction();
+		newTool.installUtilityPlugins();
 	}
 
 	private Element getDefaultToolElement() {

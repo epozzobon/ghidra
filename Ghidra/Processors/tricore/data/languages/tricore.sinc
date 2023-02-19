@@ -2893,6 +2893,10 @@ SC: [a10]const0815Z10zz is PCPMode=0 & a10 & const0815Z10zz & op0003=8 & op0404=
 	tmp[0,1] = 0;
 	goto [tmp];
 }
+:ji a11 is PCPMode=0 & op0811=11 & op0007=0xdc & op1215=0x0 & a11
+{
+	return [a11];
+}
 @endif
 
 @if defined(TRICORE_RIDER_B) || defined(TRICORE_RIDER_D) || defined(TRICORE_V2)
@@ -2903,22 +2907,26 @@ SC: [a10]const0815Z10zz is PCPMode=0 & a10 & const0815Z10zz & op0003=8 & op0404=
 	tmp[0,1] = 0;
 	goto [tmp];
 }
+:ji a11 is PCPMode=0 & op0811=11 & op0007=0x2d & op1215=0x0 & a11; op1631=0x30
+{
+	return [a11];
+}
 @endif
 
 # JL disp24 (B)
 :jl off24pc is PCPMode=0 & ( op0007=0x5d ) ... & off24pc
 {
 	#TODO  is this just a call w/o context switching?
-	a11 = inst_start + 4;
-	call [off24pc];
+	a11 = inst_next;
+	call off24pc;
 }
 
 # JLA disp24 (B)
 :jla off24abs is PCPMode=0 & ( op0007=0xdd ) ... & off24abs
 {
 	#TODO  is this just a call w/o context switching?
-	a11 = inst_start + 4;
-	call [off24abs];
+	a11 = inst_next;
+	call off24abs;
 }
 
 @if defined(TRICORE_RIDER_B) || defined(TRICORE_RIDER_D) || defined(TRICORE_V2)
@@ -7671,6 +7679,7 @@ macro multiply_u_u(mres0, rega, regb, n) {
 	build SSR;
 	*[ram]:4 SSR = Ra0811;
 }
+@endif
 
 # ST.A A[b], off10, A[a] (BO)(Post-increment Addressing Mode)
 # ST.A P[b], A[a] (BO)(Bit-reverse Addressing Mode)
@@ -7972,8 +7981,10 @@ macro multiply_u_u(mres0, rega, regb, n) {
 # ST.T off18, bpos3, b (ABSB)
 :st.t off18,const0810Z,const1111Z is PCPMode=0 & ( const0810Z & const1111Z & op0007=0xd5 ; op2627=0x0 ) & off18
 {
-	local tmp:4 = *[ram]:1 off18;
-	tmp = (tmp & ~(1 << const0810Z)) | (const1111Z << const0810Z);
+	local tmp:1 = *[ram]:1 off18;
+	ternary(tmp, const1111Z,
+		tmp |  (1 << const0810Z),
+		tmp & ~(1 << const0810Z));
 	*[ram]:1 off18 = tmp;
 }
 

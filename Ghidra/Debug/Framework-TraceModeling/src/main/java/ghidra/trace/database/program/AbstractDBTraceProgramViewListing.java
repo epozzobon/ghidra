@@ -21,7 +21,6 @@ import java.util.*;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.collect.Iterators;
-import com.google.common.collect.Range;
 
 import generic.NestedIterator;
 import ghidra.program.database.ProgramDB;
@@ -37,16 +36,17 @@ import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.util.CodeUnitInsertionException;
 import ghidra.program.model.util.PropertyMap;
 import ghidra.trace.database.DBTrace;
+import ghidra.trace.database.guest.InternalTracePlatform;
 import ghidra.trace.database.listing.UndefinedDBTraceData;
-import ghidra.trace.database.memory.DBTraceMemoryRegion;
 import ghidra.trace.database.memory.DBTraceMemorySpace;
 import ghidra.trace.database.symbol.DBTraceFunctionSymbol;
 import ghidra.trace.database.thread.DBTraceThread;
 import ghidra.trace.model.*;
 import ghidra.trace.model.listing.*;
-import ghidra.trace.model.map.TracePropertyMap;
+import ghidra.trace.model.memory.TraceMemoryRegion;
 import ghidra.trace.model.program.TraceProgramView;
 import ghidra.trace.model.program.TraceProgramViewListing;
+import ghidra.trace.model.property.TracePropertyMapOperations;
 import ghidra.trace.model.symbol.TraceFunctionSymbol;
 import ghidra.trace.util.*;
 import ghidra.util.*;
@@ -69,6 +69,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 			DBTraceMemorySpace mem = trace.getMemoryManager().get(this, false);
 			if (mem == null) {
 				// TODO: 0-fill instead? Will need to check memory space bounds.
+				return 0;
 			}
 			return mem.getViewBytes(program.snap, address.add(addressOffset), buffer);
 		}
@@ -76,9 +77,10 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 
 	protected final DBTraceProgramView program;
 	protected final TraceCodeOperations codeOperations;
+	protected final InternalTracePlatform platform;
 
 	protected final DBTraceProgramViewRootModule rootModule;
-	protected final Map<DBTraceMemoryRegion, DBTraceProgramViewFragment> fragmentsByRegion =
+	protected final Map<TraceMemoryRegion, DBTraceProgramViewFragment> fragmentsByRegion =
 		new HashMap<>();
 
 	protected final Map<AddressSnap, UndefinedDBTraceData> undefinedCache =
@@ -93,6 +95,8 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 			TraceCodeOperations codeOperations) {
 		this.program = program;
 		this.codeOperations = codeOperations;
+		// TODO: Guest platform views?
+		this.platform = program.trace.getPlatformManager().getHostPlatform();
 
 		this.rootModule = new DBTraceProgramViewRootModule(this);
 	}
@@ -251,7 +255,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	}
 
 	protected boolean isUndefinedRange(long snap, AddressRange range) {
-		if (codeOperations.undefinedData().coversRange(Range.singleton(snap), range)) {
+		if (codeOperations.undefinedData().coversRange(Lifespan.at(snap), range)) {
 			return true;
 		}
 		TraceCodeUnit minUnit =
@@ -356,14 +360,14 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 		// TODO: Other "special" property types
 
 		// TODO: Cover this in testing
-		TracePropertyMap<?> map =
-			program.trace.getAddressPropertyManager().getPropertyMap(property);
+		TracePropertyMapOperations<?> map =
+			program.trace.getInternalAddressPropertyManager().getPropertyMap(property);
 		if (map == null) {
 			return new WrappingCodeUnitIterator(Collections.emptyIterator());
 		}
 		// TODO: The property map doesn't heed forking.
 		return new WrappingCodeUnitIterator(NestedIterator.start(
-			map.getAddressSetView(Range.singleton(program.snap)).iterator(forward),
+			map.getAddressSetView(Lifespan.at(program.snap)).iterator(forward),
 			rng -> getTopCodeIterator(
 				s -> codeOperations.codeUnits().get(s, rng, forward).iterator(),
 				forward)));
@@ -378,14 +382,14 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 		// TODO: Other "special" property types
 
 		// TODO: Cover this in testing
-		TracePropertyMap<?> map =
-			program.trace.getAddressPropertyManager().getPropertyMap(property);
+		TracePropertyMapOperations<?> map =
+			program.trace.getInternalAddressPropertyManager().getPropertyMap(property);
 		if (map == null) {
 			return new WrappingCodeUnitIterator(Collections.emptyIterator());
 		}
 		// TODO: The property map doesn't heed forking.
 		return new WrappingCodeUnitIterator(NestedIterator.start(
-			map.getAddressSetView(Range.singleton(program.snap)).iterator(addr, forward),
+			map.getAddressSetView(Lifespan.at(program.snap)).iterator(addr, forward),
 			rng -> getTopCodeIterator(
 				s -> codeOperations.codeUnits().get(s, rng, forward).iterator(),
 				forward)));
@@ -401,39 +405,47 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 		// TODO: Other "special" property types
 
 		// TODO: Cover this in testing
-		TracePropertyMap<?> map =
-			program.trace.getAddressPropertyManager().getPropertyMap(property);
+		TracePropertyMapOperations<?> map =
+			program.trace.getInternalAddressPropertyManager().getPropertyMap(property);
 		if (map == null) {
 			return new WrappingCodeUnitIterator(Collections.emptyIterator());
 		}
 		// TODO: The property map doesn't heed forking.
 		return new WrappingCodeUnitIterator(NestedIterator.start(
-			new IntersectionAddressSetView(map.getAddressSetView(Range.singleton(program.snap)),
+			new IntersectionAddressSetView(map.getAddressSetView(Lifespan.at(program.snap)),
 				addrSet).iterator(forward),
 			rng -> getTopCodeIterator(
 				s -> codeOperations.codeUnits().get(s, rng, forward).iterator(),
 				forward)));
 	}
 
+	protected AddressSetView getCommentAddresses(int commentType, AddressSetView addrSet) {
+		return new IntersectionAddressSetView(addrSet, program.viewport.unionedAddresses(
+			s -> program.trace.getCommentAdapter()
+					.getAddressSetView(Lifespan.at(s), e -> e.getType() == commentType)));
+	}
+
+	protected AddressSetView getCommentAddresses(AddressSetView addrSet) {
+		return new IntersectionAddressSetView(addrSet, program.viewport.unionedAddresses(
+			s -> program.trace.getCommentAdapter()
+					.getAddressSetView(Lifespan.at(s))));
+	}
+
 	@Override
 	public CodeUnitIterator getCommentCodeUnitIterator(int commentType, AddressSetView addrSet) {
-		// TODO Auto-generated method stub
-		return null;
+		return new WrappingCodeUnitIterator(
+			getCodeUnitIterator(getCommentAddresses(commentType, addrSet), true));
 	}
 
 	@Override
 	public AddressIterator getCommentAddressIterator(int commentType, AddressSetView addrSet,
 			boolean forward) {
-		return new IntersectionAddressSetView(addrSet, program.viewport.unionedAddresses(
-			s -> program.trace.getCommentAdapter()
-					.getAddressSetView(Range.singleton(s), e -> e.getType() == commentType)))
-							.getAddresses(forward);
+		return getCommentAddresses(commentType, addrSet).getAddresses(forward);
 	}
 
 	@Override
 	public AddressIterator getCommentAddressIterator(AddressSetView addrSet, boolean forward) {
-		// TODO Auto-generated method stub
-		return null;
+		return getCommentAddresses(addrSet).getAddresses(forward);
 	}
 
 	@Override
@@ -447,7 +459,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	@Override
 	public void setComment(Address address, int commentType, String comment) {
 		program.trace.getCommentAdapter()
-				.setComment(Range.atLeast(program.snap), address,
+				.setComment(Lifespan.nowOn(program.snap), address,
 					commentType, comment);
 	}
 
@@ -707,6 +719,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	}
 
 	@Override
+	@SuppressWarnings("rawtypes")
 	public PropertyMap getPropertyMap(String propertyName) {
 		// TODO Auto-generated method stub
 		return null;
@@ -716,32 +729,28 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	public Instruction createInstruction(Address addr, InstructionPrototype prototype,
 			MemBuffer memBuf, ProcessorContextView context) throws CodeUnitInsertionException {
 		// TODO: Why memBuf? Can it vary from program memory?
-		try (LockHold hold = program.trace.lockWrite()) {
-			return codeOperations.instructions()
-					.create(Range.atLeast(program.snap), addr,
-						prototype, context);
-		}
+		return codeOperations.instructions()
+				.create(Lifespan.nowOn(program.snap), addr, platform, prototype, context);
 	}
 
 	@Override
 	public AddressSetView addInstructions(InstructionSet instructionSet, boolean overwrite)
 			throws CodeUnitInsertionException {
 		return codeOperations.instructions()
-				.addInstructionSet(Range.atLeast(program.snap),
-					instructionSet, overwrite);
+				.addInstructionSet(Lifespan.nowOn(program.snap), platform, instructionSet,
+					overwrite);
 	}
 
 	@Override
 	public Data createData(Address addr, DataType dataType, int length)
 			throws CodeUnitInsertionException {
 		return codeOperations.definedData()
-				.create(Range.atLeast(program.snap), addr, dataType,
-					length);
+				.create(Lifespan.nowOn(program.snap), addr, dataType, length);
 	}
 
 	@Override
 	public Data createData(Address addr, DataType dataType) throws CodeUnitInsertionException {
-		return codeOperations.definedData().create(Range.atLeast(program.snap), addr, dataType);
+		return codeOperations.definedData().create(Lifespan.nowOn(program.snap), addr, dataType);
 	}
 
 	@Override
@@ -757,7 +766,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 	@Override
 	public void clearComments(Address startAddr, Address endAddr) {
 		program.trace.getCommentAdapter()
-				.clearComments(Range.atLeast(program.snap),
+				.clearComments(Lifespan.nowOn(program.snap),
 					new AddressRangeImpl(startAddr, endAddr), CodeUnit.NO_COMMENT);
 	}
 
@@ -770,7 +779,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 
 	@Override
 	public ProgramFragment getFragment(String treeName, Address addr) {
-		DBTraceMemoryRegion region = program.memory.getTopRegion(
+		TraceMemoryRegion region = program.memory.getTopRegion(
 			s -> program.trace.getMemoryManager().getRegionContaining(s, addr));
 		if (region == null) {
 			return null;
@@ -789,7 +798,7 @@ public abstract class AbstractDBTraceProgramViewListing implements TraceProgramV
 
 	@Override
 	public ProgramFragment getFragment(String treeName, String name) {
-		DBTraceMemoryRegion region = program.memory.getTopRegion(
+		TraceMemoryRegion region = program.memory.getTopRegion(
 			s -> program.trace.getMemoryManager().getLiveRegionByPath(s, name));
 		if (region == null) {
 			return null;

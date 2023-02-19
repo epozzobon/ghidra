@@ -19,7 +19,8 @@ import static org.junit.Assert.*;
 
 import java.awt.Component;
 import java.awt.Container;
-import java.awt.event.*;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Date;
 import java.util.Random;
@@ -187,7 +188,7 @@ public class SearchTextPlugin1Test extends AbstractGhidraHeadedIntegrationTest {
 		assertNotNull(commentsCB);
 		assertSelected(commentsCB);
 
-		// verify that the case sensitive checkbox is not selected				
+		// verify that the case sensitive checkbox is not selected
 		JCheckBox csCB = (JCheckBox) findButton(dialog.getComponent(), "Case Sensitive");
 		assertNotNull(csCB);
 		assertNotSelected(csCB);
@@ -216,7 +217,7 @@ public class SearchTextPlugin1Test extends AbstractGhidraHeadedIntegrationTest {
 	@Test
 	public void testSearchOptions() throws Exception {
 		// verify that the search dialog allows for searching Functions,
-		// Comments, labels, instruction mnemonics and operands, defined data 
+		// Comments, labels, instruction mnemonics and operands, defined data
 		// mnemonics and values.
 		SearchTextDialog dialog = getDialog();
 		JCheckBox cb = (JCheckBox) findButton(dialog.getComponent(), "Functions");
@@ -419,6 +420,8 @@ public class SearchTextPlugin1Test extends AbstractGhidraHeadedIntegrationTest {
 		loc = cbPlugin.getCurrentLocation();
 		assertEquals(getAddr(0x01004192), loc.getAddress());
 		assertTrue(loc instanceof CommentFieldLocation);
+		assertEquals("Search result not placed at the matching character position", 15,
+			((CommentFieldLocation) loc).getCharOffset());
 		assertEquals(CodeUnit.PLATE_COMMENT, ((CommentFieldLocation) loc).getCommentType());
 
 		pressButton(searchButton);
@@ -667,7 +670,7 @@ public class SearchTextPlugin1Test extends AbstractGhidraHeadedIntegrationTest {
 
 		//
 		// test marker stuff
-		// 
+		//
 		AddressSet set = getAddressesFromModel(model);
 		MarkerService markerService = tool.getService(MarkerService.class);
 		MarkerSet markerSet = markerService.getMarkerSet("Search", program);
@@ -972,8 +975,7 @@ public class SearchTextPlugin1Test extends AbstractGhidraHeadedIntegrationTest {
 	}
 
 	private void searchOnce(JTextField tf) throws Exception {
-		ActionListener listener = tf.getActionListeners()[0];
-		runSwing(() -> listener.actionPerformed(null));
+		triggerEnter(tf);
 	}
 
 	private void searchBackOnce(SearchTextDialog dialog) throws Exception {

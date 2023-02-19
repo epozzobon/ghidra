@@ -70,18 +70,18 @@ task indexHelp(type: JavaExec) {
 	group "private"
 	description "indexes the helps files for this module.  [gradle/helpProject.gradle]"
 
-
 	File helpRootDir = file('src/main/help/help')		
 	File outputFile = file("build/help/main/help/${project.name}_JavaHelpSearch")	
 
 	dependsOn configurations.helpPath
+	dependsOn configurations.runtimeClasspath
 
 	inputs.dir helpRootDir
 	outputs.dir outputFile
 	
 	classpath = sourceSets.helpIndex.runtimeClasspath
 	
-	main = 'com.sun.java.help.search.Indexer'		
+	mainClass = 'com.sun.java.help.search.Indexer'
 
 	// tell the indexer where send its output	
 	args '-db', outputFile.absolutePath
@@ -119,19 +119,34 @@ task indexHelp(type: JavaExec) {
 	}
 }
 
+task cleanHelp {
+	File helpOutput = file('build/help/main/help')
+	doFirst {
+		delete helpOutput
+	}
+}
+
 // Task for building Ghidra help files 
 // 		- depends on the output from the help indexer
 task buildHelp(type: JavaExec, dependsOn: indexHelp) {
 	group rootProject.GHIDRA_GROUP
 	description "      Builds the help for this module.  [gradle/helpProject.gradle]\n"	
 
+	outputs.upToDateWhen {false} // TODO remove this. we should be able to get the inputs right
+								// the issue is if docs get changed in a dependant module,
+								// this modules needs to know to rebuild
+
 	File helpRootDir = file('src/main/help/help')	
 	File outputDir = file('build/help/main/help')
 
-	inputs.dir helpRootDir
+	inputs.dir file('src/main/help');
+	File resourcesDir = file('src/main/resources')
+	if (resourcesDir.exists()) {
+		inputs.dir resourcesDir
+	}
 	outputs.dir outputDir
 
-	main = 'help.GHelpBuilder'		
+	mainClass = 'help.GHelpBuilder'
 	
 	args '-n', "${project.name}"	 		// use the module's name for the help file name
 	
@@ -141,8 +156,15 @@ task buildHelp(type: JavaExec, dependsOn: indexHelp) {
 	// args '-debug' // print debug info
 
 	doFirst {		
-		// this modules runtime classpath (contains jhall.jar)
-		classpath project(':Help').sourceSets.main.runtimeClasspath		
+	
+		// this module's runtime classpath (contains jhall.jar)
+		classpath project(':Help').sourceSets.main.runtimeClasspath
+		
+		// include the classpath for the project using this Help gradle script plugin    
+    	classpath += project.sourceSets.main.runtimeClasspath	
+		// since this runs BEFORE resources are copied, include the resources source dir in
+		// the classpath so the help validator can find them
+		classpath += files('src/main/resources')
 	
 		configurations.helpPath.each { 
 			args "-hp"
@@ -169,7 +191,7 @@ task findUnusedHelp(type: JavaExec) {
 
 	inputs.dir helpRootDir
 
-	main = 'help.validator.UnusedHelpImageFileFinder'		
+	mainClass = 'help.validator.UnusedHelpImageFileFinder'
 
 	// args '-debug' // print debug info
 

@@ -22,7 +22,6 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import com.google.common.collect.Collections2;
-import com.google.common.collect.Range;
 
 import db.DBHandle;
 import ghidra.program.model.address.*;
@@ -30,11 +29,12 @@ import ghidra.program.model.lang.Language;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.symbol.*;
 import ghidra.trace.database.DBTrace;
+import ghidra.trace.database.address.DBTraceOverlaySpaceAdapter;
 import ghidra.trace.database.space.AbstractDBTraceSpaceBasedManager;
 import ghidra.trace.database.space.DBTraceDelegatingManager;
 import ghidra.trace.database.symbol.DBTraceReferenceSpace.DBTraceReferenceEntry;
-import ghidra.trace.database.thread.DBTraceThread;
 import ghidra.trace.database.thread.DBTraceThreadManager;
+import ghidra.trace.model.Lifespan;
 import ghidra.trace.model.stack.TraceStackFrame;
 import ghidra.trace.model.symbol.TraceReference;
 import ghidra.trace.model.symbol.TraceReferenceManager;
@@ -44,15 +44,18 @@ import ghidra.util.database.DBOpenMode;
 import ghidra.util.exception.VersionException;
 import ghidra.util.task.TaskMonitor;
 
-public class DBTraceReferenceManager extends
-		AbstractDBTraceSpaceBasedManager<DBTraceReferenceSpace, DBTraceReferenceRegisterSpace>
+public class DBTraceReferenceManager extends AbstractDBTraceSpaceBasedManager<DBTraceReferenceSpace>
 		implements TraceReferenceManager, DBTraceDelegatingManager<DBTraceReferenceSpace> {
 	public static final String NAME = "Reference";
 
+	protected final DBTraceOverlaySpaceAdapter overlayAdapter;
+
 	public DBTraceReferenceManager(DBHandle dbh, DBOpenMode openMode, ReadWriteLock lock,
 			TaskMonitor monitor, Language baseLanguage, DBTrace trace,
-			DBTraceThreadManager threadManager) throws VersionException, IOException {
+			DBTraceThreadManager threadManager, DBTraceOverlaySpaceAdapter overlayAdapter)
+			throws VersionException, IOException {
 		super(NAME, dbh, openMode, lock, monitor, baseLanguage, trace, threadManager);
+		this.overlayAdapter = overlayAdapter;
 
 		loadSpaces();
 	}
@@ -60,13 +63,13 @@ public class DBTraceReferenceManager extends
 	@Override
 	protected DBTraceReferenceSpace createSpace(AddressSpace space, DBTraceSpaceEntry ent)
 			throws VersionException, IOException {
-		return new DBTraceReferenceSpace(this, dbh, space, ent);
+		return new DBTraceReferenceSpace(this, dbh, space, ent, null);
 	}
 
 	@Override
-	protected DBTraceReferenceRegisterSpace createRegisterSpace(AddressSpace space,
-			DBTraceThread thread, DBTraceSpaceEntry ent) throws VersionException, IOException {
-		return new DBTraceReferenceRegisterSpace(this, dbh, space, ent, thread);
+	protected DBTraceReferenceSpace createRegisterSpace(AddressSpace space,
+			TraceThread thread, DBTraceSpaceEntry ent) throws VersionException, IOException {
+		return new DBTraceReferenceSpace(this, dbh, space, ent, thread);
 	}
 
 	/**
@@ -143,13 +146,13 @@ public class DBTraceReferenceManager extends
 	}
 
 	@Override
-	public DBTraceReferenceRegisterSpace getReferenceRegisterSpace(TraceThread thread,
+	public DBTraceReferenceSpace getReferenceRegisterSpace(TraceThread thread,
 			boolean createIfAbsent) {
 		return getForRegisterSpace(thread, 0, createIfAbsent);
 	}
 
 	@Override
-	public DBTraceReferenceRegisterSpace getReferenceRegisterSpace(TraceStackFrame frame,
+	public DBTraceReferenceSpace getReferenceRegisterSpace(TraceStackFrame frame,
 			boolean createIfAbsent) {
 		return getForRegisterSpace(frame, createIfAbsent);
 	}
@@ -161,41 +164,42 @@ public class DBTraceReferenceManager extends
 	}
 
 	@Override
-	public DBTraceReference addReference(Range<Long> lifespan, Reference reference) {
+	public DBTraceReference addReference(Lifespan lifespan, Reference reference) {
 		return delegateWrite(reference.getFromAddress().getAddressSpace(),
 			s -> s.addReference(lifespan, reference));
 	}
 
 	@Override
-	public DBTraceReference addMemoryReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceReference addMemoryReference(Lifespan lifespan, Address fromAddress,
 			Address toAddress, RefType refType, SourceType source, int operandIndex) {
 		return delegateWrite(fromAddress.getAddressSpace(), s -> s.addMemoryReference(lifespan,
 			fromAddress, toAddress, refType, source, operandIndex));
 	}
 
 	@Override
-	public DBTraceOffsetReference addOffsetReference(Range<Long> lifespan, Address fromAddress,
-			Address toAddress, long offset, RefType refType, SourceType source, int operandIndex) {
+	public DBTraceOffsetReference addOffsetReference(Lifespan lifespan, Address fromAddress,
+			Address toAddress, boolean toAddrIsBase, long offset, RefType refType,
+			SourceType source, int operandIndex) {
 		return delegateWrite(fromAddress.getAddressSpace(), s -> s.addOffsetReference(lifespan,
-			fromAddress, toAddress, offset, refType, source, operandIndex));
+			fromAddress, toAddress, toAddrIsBase, offset, refType, source, operandIndex));
 	}
 
 	@Override
-	public DBTraceShiftedReference addShiftedReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceShiftedReference addShiftedReference(Lifespan lifespan, Address fromAddress,
 			Address toAddress, int shift, RefType refType, SourceType source, int operandIndex) {
 		return delegateWrite(fromAddress.getAddressSpace(), s -> s.addShiftedReference(lifespan,
 			fromAddress, toAddress, shift, refType, source, operandIndex));
 	}
 
 	@Override
-	public DBTraceReference addRegisterReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceReference addRegisterReference(Lifespan lifespan, Address fromAddress,
 			Register toRegister, RefType refType, SourceType source, int operandIndex) {
 		return delegateWrite(fromAddress.getAddressSpace(), s -> s.addRegisterReference(lifespan,
 			fromAddress, toRegister, refType, source, operandIndex));
 	}
 
 	@Override
-	public DBTraceReference addStackReference(Range<Long> lifespan, Address fromAddress,
+	public DBTraceReference addStackReference(Lifespan lifespan, Address fromAddress,
 			int toStackOffset, RefType refType, SourceType source, int operandIndex) {
 		return delegateWrite(fromAddress.getAddressSpace(), s -> s.addStackReference(lifespan,
 			fromAddress, toStackOffset, refType, source, operandIndex));
@@ -223,7 +227,7 @@ public class DBTraceReferenceManager extends
 	}
 
 	@Override
-	public Collection<? extends DBTraceReference> getReferencesFromRange(Range<Long> span,
+	public Collection<? extends DBTraceReference> getReferencesFromRange(Lifespan span,
 			AddressRange range) {
 		return delegateRead(range.getAddressSpace(), s -> s.getReferencesFromRange(span, range),
 			Collections.emptyList());
@@ -244,7 +248,7 @@ public class DBTraceReferenceManager extends
 	}
 
 	@Override
-	public void clearReferencesFrom(Range<Long> span, AddressRange range) {
+	public void clearReferencesFrom(Lifespan span, AddressRange range) {
 		delegateDeleteV(range.getAddressSpace(), s -> s.clearReferencesFrom(span, range));
 	}
 
@@ -255,20 +259,25 @@ public class DBTraceReferenceManager extends
 	}
 
 	@Override
-	public Collection<? extends DBTraceReference> getReferencesToRange(Range<Long> span,
+	public Collection<? extends DBTraceReference> getReferencesToRange(Lifespan span,
 			AddressRange range) {
 		return delegateRead(range.getAddressSpace(), s -> s.getReferencesToRange(span, range),
 			Collections.emptyList());
 	}
 
 	@Override
-	public AddressSetView getReferenceSources(Range<Long> span) {
+	public void clearReferencesTo(Lifespan span, AddressRange range) {
+		delegateDeleteV(range.getAddressSpace(), s -> s.clearReferencesTo(span, range));
+	}
+
+	@Override
+	public AddressSetView getReferenceSources(Lifespan span) {
 		return new UnionAddressSetView(
 			Collections2.transform(memSpacesView, s -> s.getReferenceSources(span)));
 	}
 
 	@Override
-	public AddressSetView getReferenceDestinations(Range<Long> span) {
+	public AddressSetView getReferenceDestinations(Lifespan span) {
 		return new UnionAddressSetView(
 			Collections2.transform(memSpacesView, s -> s.getReferenceDestinations(span)));
 	}

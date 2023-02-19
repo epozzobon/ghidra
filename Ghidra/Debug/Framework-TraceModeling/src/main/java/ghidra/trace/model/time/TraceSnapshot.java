@@ -17,6 +17,7 @@ package ghidra.trace.model.time;
 
 import ghidra.trace.model.Trace;
 import ghidra.trace.model.thread.TraceThread;
+import ghidra.trace.model.time.schedule.TraceSchedule;
 
 /**
  * A "snapshot in time" in a trace
@@ -113,6 +114,22 @@ public interface TraceSnapshot {
 	 * @param schedule the schedule
 	 */
 	void setSchedule(TraceSchedule schedule);
+
+	/**
+	 * Get the snapshot's version, esp., when it represents a cache entry
+	 * 
+	 * @see Trace#getEmulatorCacheVersion()
+	 * @return the version
+	 */
+	long getVersion();
+
+	/**
+	 * Set the snapshot's version, esp., when it represents a cache entry
+	 * 
+	 * @see Trace#getEmulatorCacheVersion()
+	 * @param version the version
+	 */
+	void setVersion(long version);
 
 	/**
 	 * Delete this snapshot

@@ -459,4 +459,66 @@ public interface DbgEngNative extends StdCallLibrary {
 			return FIELDS;
 		}
 	}
+
+	public class DEBUG_SPECIFIC_FILTER_PARAMETERS extends Structure {
+		public static class ByReference extends DEBUG_SPECIFIC_FILTER_PARAMETERS
+				implements Structure.ByReference {
+		}
+
+		public static final List<String> FIELDS =
+			createFieldsOrder("ExecutionOption", "ContinueOption", "TextSize", "CommandSize",
+				"ArgumentSize");
+
+		public ULONG ExecutionOption;
+		public ULONG ContinueOption;
+		public ULONG TextSize;
+		public ULONG CommandSize;
+		public ULONG ArgumentSize;
+
+		@Override
+		protected List<String> getFieldOrder() {
+			return FIELDS;
+		}
+	}
+
+	public class DEBUG_EXCEPTION_FILTER_PARAMETERS extends Structure {
+		public static class ByReference extends DEBUG_EXCEPTION_FILTER_PARAMETERS
+				implements Structure.ByReference {
+		}
+
+		public static final List<String> FIELDS =
+			createFieldsOrder("ExecutionOption", "ContinueOption", "TextSize", "CommandSize",
+				"SecondCommandSize", "ExceptionCode");
+
+		public ULONG ExecutionOption;
+		public ULONG ContinueOption;
+		public ULONG TextSize;
+		public ULONG CommandSize;
+		public ULONG SecondCommandSize;
+		public ULONG ExceptionCode;
+
+		@Override
+		protected List<String> getFieldOrder() {
+			return FIELDS;
+		}
+	}
+
+	public static class DEBUG_CREATE_PROCESS_OPTIONS extends Structure {
+		public static class ByReference extends DEBUG_CREATE_PROCESS_OPTIONS
+				implements Structure.ByReference {
+		}
+
+		public static final List<String> FIELDS = createFieldsOrder(
+			"CreateFlags", "EngCreateFlags", "VerifierFlags", "Reserved");
+
+		public ULONG CreateFlags;
+		public ULONG EngCreateFlags;
+		public ULONG VerifierFlags;
+		public ULONG Reserved;
+
+		@Override
+		protected List<String> getFieldOrder() {
+			return FIELDS;
+		}
+	}
 }

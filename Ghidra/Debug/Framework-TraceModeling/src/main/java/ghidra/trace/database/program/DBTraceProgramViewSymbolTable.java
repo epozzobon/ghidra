@@ -18,7 +18,6 @@ package ghidra.trace.database.program;
 import java.util.*;
 
 import com.google.common.collect.Iterators;
-import com.google.common.collect.Range;
 
 import generic.NestedIterator;
 import generic.util.PeekableIterator;
@@ -27,6 +26,7 @@ import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.*;
 import ghidra.trace.database.DBTraceUtils;
 import ghidra.trace.database.symbol.*;
+import ghidra.trace.model.Lifespan;
 import ghidra.trace.model.symbol.*;
 import ghidra.util.*;
 import ghidra.util.exception.*;
@@ -88,23 +88,11 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 	}
 
 	@Override
-	public Symbol createSymbol(Address addr, String name, SourceType source)
-			throws InvalidInputException {
-		return createLabel(addr, name, source);
-	}
-
-	@Override
 	public Symbol createLabel(Address addr, String name, Namespace namespace, SourceType source)
 			throws InvalidInputException {
 		return symbolManager.labels()
 				.create(program.snap, null, addr, name,
 					assertTraceNamespace(namespace), source);
-	}
-
-	@Override
-	public Symbol createSymbol(Address addr, String name, Namespace namespace, SourceType source)
-			throws DuplicateNameException, InvalidInputException {
-		return createLabel(addr, name, namespace, source);
 	}
 
 	@Override
@@ -194,26 +182,6 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 	@Override
 	public Symbol getGlobalSymbol(String name, Address addr) {
 		return getSymbol(name, addr, global);
-	}
-
-	@Override
-	public Symbol getSymbol(String name, Namespace namespace) {
-		try (LockHold hold = program.trace.lockRead()) {
-			for (TraceSymbol sym : symbolManager.allSymbols()
-					.getChildrenNamed(name,
-						assertTraceNamespace(namespace))) {
-				if (requireVisible(sym) == null) {
-					continue;
-				}
-				return sym;
-			}
-			return null;
-		}
-	}
-
-	@Override
-	public Symbol getSymbol(String name) {
-		return getSymbol(name, global);
 	}
 
 	@Override
@@ -327,6 +295,13 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 	}
 
 	@Override
+	public SymbolIterator getSymbolsAsIterator(Address addr) {
+		Symbol[] symbols = getSymbols(addr);
+		List<Symbol> list = Arrays.asList(symbols);
+		return new SymbolIteratorAdapter(list.iterator());
+	}
+
+	@Override
 	public Symbol[] getUserSymbols(Address addr) {
 		try (LockHold hold = program.trace.lockRead()) {
 			Collection<? extends TraceSymbol> at =
@@ -380,14 +355,12 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 			if (range.getAddressSpace().isMemorySpace()) {
 				if (type == SymbolType.LABEL) {
 					return symbolManager.labels()
-							.getIntersecting(Range.singleton(program.snap),
-								null, range, true, forward)
+							.getIntersecting(Lifespan.at(program.snap), null, range, true, forward)
 							.iterator();
 				}
 				if (type == SymbolType.FUNCTION) {
 					return symbolManager.functions()
-							.getIntersecting(Range.singleton(program.snap),
-								null, range, true, forward)
+							.getIntersecting(Lifespan.at(program.snap), null, range, true, forward)
 							.iterator();
 				}
 			}
@@ -408,6 +381,11 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 	}
 
 	@Override
+	public SymbolIterator scanSymbolsByName(String startName) {
+		return new SymbolIteratorAdapter(symbolManager.allSymbols().scanByName(startName));
+	}
+
+	@Override
 	public int getNumSymbols() {
 		return symbolManager.allSymbols().size(true);
 	}
@@ -417,7 +395,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 			boolean includeDynamicSymbols, boolean forward) {
 		Iterator<AddressRange> rit = asv.iterator(forward);
 		Iterator<Iterator<? extends Symbol>> iit = Iterators.transform(rit, range -> {
-			return view.getIntersecting(Range.singleton(program.snap), null, range,
+			return view.getIntersecting(Lifespan.at(program.snap), null, range,
 				includeDynamicSymbols, forward).iterator();
 		});
 		return Iterators.concat(iit);
@@ -477,8 +455,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 	public SymbolIterator getPrimarySymbolIterator(AddressSetView asv, boolean forward) {
 		return new PrimarySymbolIterator(NestedIterator.start(asv.iterator(forward),
 			range -> symbolManager.labelsAndFunctions()
-					.getIntersecting(
-						Range.singleton(program.snap), null, range, true, forward)
+					.getIntersecting(Lifespan.at(program.snap), null, range, true, forward)
 					.iterator()));
 	}
 

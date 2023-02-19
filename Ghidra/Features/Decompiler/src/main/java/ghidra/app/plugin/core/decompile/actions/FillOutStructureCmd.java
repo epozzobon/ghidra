@@ -508,8 +508,10 @@ public class FillOutStructureCmd extends BackgroundCommand {
 		if (isThisParam) {
 			Namespace rootNamespace = currentProgram.getGlobalNamespace();
 			Namespace newNamespace = createUniqueClassName(rootNamespace);
-			RenameLabelCmd command = new RenameLabelCmd(f.getEntryPoint(), f.getName(), f.getName(),
-				rootNamespace, newNamespace, SourceType.USER_DEFINED);
+			String name = f.getName();
+			Symbol symbol = f.getSymbol();
+			RenameLabelCmd command =
+				new RenameLabelCmd(symbol, name, newNamespace, SourceType.USER_DEFINED);
 			if (!command.applyTo(currentProgram)) {
 				return null;
 			}
@@ -545,12 +547,10 @@ public class FillOutStructureCmd extends BackgroundCommand {
 				symbolTable.createClass(rootNamespace, newClassName, SourceType.USER_DEFINED);
 		}
 		catch (DuplicateNameException e) {
-			// Shouldn't happen
-			e.printStackTrace();
+			Msg.error(this, "Error creating class '" + newClassName + "'", e);
 		}
 		catch (InvalidInputException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			Msg.error(this, "Error creating class '" + newClassName + "'", e);
 		}
 		return newClass;
 	}
@@ -559,12 +559,16 @@ public class FillOutStructureCmd extends BackgroundCommand {
 		return currentProgram.getDataTypeManager().getUniqueName(new CategoryPath(category), base);
 	}
 
-	private boolean sanityCheck(long offset) {
+	private boolean sanityCheck(long offset, long existingSize) {
+
 		if (offset < 0) {
 			return false; // offsets shouldn't be negative
 		}
+		if (offset < existingSize) {
+			return true; // we have room in the structure
+		}
 		if (offset > 0x1000) {
-			return false; // Arbitrary size cut-off to prevent creating huge structures
+			return false; // bigger than existing size; arbitrary cut-off to prevent huge structures
 		}
 		return true;
 	}
@@ -648,7 +652,7 @@ public class FillOutStructureCmd extends BackgroundCommand {
 						long value = getSigned(inputs[1]);
 						newOff = currentRef.offset +
 							((pcodeOp.getOpcode() == PcodeOp.INT_ADD) ? value : (-value));
-						if (sanityCheck(newOff)) { // should this offset create a location in the structure?
+						if (sanityCheck(newOff, componentMap.getSize())) { // should this offset create a location in the structure?
 							putOnList(output, newOff, todoList, doneList);
 							// Don't do componentMap.addDataType() as data-type info here is likely uninformed
 							componentMap.setMinimumSize(newOff);
@@ -659,7 +663,7 @@ public class FillOutStructureCmd extends BackgroundCommand {
 							break;
 						}
 						newOff = currentRef.offset + getSigned(inputs[1]) * inputs[2].getOffset();
-						if (sanityCheck(newOff)) { // should this offset create a location in the structure?
+						if (sanityCheck(newOff, componentMap.getSize())) { // should this offset create a location in the structure?
 							putOnList(output, newOff, todoList, doneList);
 							// Don't do componentMap.addReference() as data-type info here is likely uninformed
 							componentMap.setMinimumSize(newOff);
@@ -670,7 +674,7 @@ public class FillOutStructureCmd extends BackgroundCommand {
 							break;
 						}
 						long subOff = currentRef.offset + getSigned(inputs[1]);
-						if (sanityCheck(subOff)) { // should this offset create a location in the structure?
+						if (sanityCheck(subOff, componentMap.getSize())) { // should this offset create a location in the structure?
 							putOnList(output, subOff, todoList, doneList);
 							// Don't do componentMap.addReference() as data-type info here is likely uninformed
 							componentMap.setMinimumSize(subOff);

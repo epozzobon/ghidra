@@ -22,6 +22,7 @@ import java.util.stream.Collectors;
 
 import agent.dbgeng.dbgeng.*;
 import agent.dbgeng.manager.*;
+import agent.dbgeng.manager.breakpoint.DbgBreakpointInfo;
 import agent.dbgeng.model.iface1.DbgModelTargetConfigurable;
 import agent.dbgeng.model.iface2.*;
 import ghidra.async.AsyncUtils;
@@ -32,12 +33,12 @@ import ghidra.dbg.target.schema.*;
 
 @TargetObjectSchemaInfo(
 	name = "ProcessContainer",
-	elements = { //
-		@TargetElementType(type = DbgModelTargetProcessImpl.class) //
+	elements = {
+		@TargetElementType(type = DbgModelTargetProcessImpl.class)
 	},
-	attributes = { //
-		@TargetAttributeType(name = TargetConfigurable.BASE_ATTRIBUTE_NAME, type = Integer.class), //
-		@TargetAttributeType(type = Void.class) //
+	attributes = {
+		@TargetAttributeType(name = TargetConfigurable.BASE_ATTRIBUTE_NAME, type = Integer.class),
+		@TargetAttributeType(type = Void.class)
 	},
 	canonicalContainer = true)
 public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
@@ -57,7 +58,7 @@ public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
 		DbgModelTargetProcess process = getTargetProcess(proc);
 		changeElements(List.of(), List.of(process), Map.of(), "Added");
 		process.processStarted(proc.getPid());
-		getListeners().fire.event(getProxy(), null, TargetEventType.PROCESS_CREATED,
+		broadcast().event(getProxy(), null, TargetEventType.PROCESS_CREATED,
 			"Process " + proc.getId() + " started " + process.getName() + "pid=" + proc.getPid(),
 			List.of(process));
 	}
@@ -97,6 +98,16 @@ public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
 	}
 
 	@Override
+	public void breakpointHit(DbgBreakpointInfo info, DbgCause cause) {
+		DbgProcess proc = info.getProc();
+		DbgModelTargetProcess process = getTargetProcess(proc);
+		DbgModelTargetMemoryContainer memory = process.getMemory();
+		if (memory != null) {
+			memory.requestElements(true);
+		}
+	}
+
+	@Override
 	public void moduleLoaded(DbgProcess proc, DebugModuleInfo info, DbgCause cause) {
 		DbgModelTargetProcess process = getTargetProcess(proc);
 		DbgModelTargetModuleContainer modules = process.getModules();
@@ -105,7 +116,7 @@ public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
 		}
 		DbgModelTargetMemoryContainer memory = process.getMemory();
 		if (memory != null) {
-			memory.requestElements(false);
+			memory.requestElements(true);
 		}
 	}
 

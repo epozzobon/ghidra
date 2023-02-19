@@ -22,6 +22,7 @@ import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.MemoryAccessException;
+import ghidra.program.model.reloc.Relocation.Status;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.util.exception.InvalidInputException;
@@ -37,6 +38,15 @@ public interface ElfLoadHelper {
 	 * @return program object
 	 */
 	Program getProgram();
+
+	/**
+	 * Get an import processing option value
+	 * @param <T> class of option value (e.g., String, Boolean, etc.)
+	 * @param optionName option name
+	 * @param defaultValue default option value which also establishes expected value type
+	 * @return option value
+	 */
+	<T> T getOption(String optionName, T defaultValue);
 
 	/**
 	 * Get ELF Header object
@@ -167,7 +177,7 @@ public interface ElfLoadHelper {
 	 * Returns the appropriate .got (Global Offset Table) section address using the
 	 * DT_PLTGOT value defined in the .dynamic section.
 	 * If the dynamic value is not defined, the symbol offset for _GLOBAL_OFFSET_TABLE_
-	 * will be used, otherwise null will be returned.
+	 * will be used, otherwise null will be returned.  See {@link ElfConstants#GOT_SYMBOL_NAME}.
 	 * @return the .got section address offset
 	 */
 	public Long getGOTValue();
@@ -202,5 +212,20 @@ public interface ElfLoadHelper {
 	 */
 	public long getOriginalValue(Address addr, boolean signExtend)
 			throws MemoryAccessException;
+
+	/**
+	 * Add an artificial relocation table entry if none previously existed for the specified address.
+	 * This is intended to record original file bytes when forced modifications have been
+	 * performed during the ELF import processing.  A relocation type of 0 and a status of 
+	 * {@link Status#APPLIED_OTHER} will be applied to the relocation entry.  
+	 * NOTE: The number of recorded original FileBytes currently ignores the specified length.
+	 * However, the length is still used to verify that that the intended modification region
+	 * dose not intersect another relocation.
+	 * @param address relocation address
+	 * @param length number of bytes affected
+	 * @return true if recorded successfully, or false if conflict with existing relocation 
+	 * entry and memory addressing error occurs
+	 */
+	public boolean addArtificialRelocTableEntry(Address address, int length);
 
 }
