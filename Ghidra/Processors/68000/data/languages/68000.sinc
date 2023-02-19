@@ -87,6 +87,7 @@ define token instr (16)
   op03 = (0,3)
   op08 = (0,8)
   op015 = (0,15)
+  op011 = (0,11)
   op34 = (3,4)
   op35 = (3,5)
   op37 = (3,7)
@@ -336,6 +337,8 @@ define pcodeop kfactor;
 define pcodeop ftrap;
 define pcodeop __m68k_trap;
 define pcodeop __m68k_trapv;
+define pcodeop __m68k_lineA;
+define pcodeop __m68k_lineF;
 define pcodeop reset;
 define pcodeop saveFPUStateFrame;
 define pcodeop restoreFPUStateFrame;
@@ -2255,6 +2258,9 @@ define pcodeop stop;
 :trap^cc^".w" const16	is op=5 & cc & op37=31 & op02=2; const16	{ if (!cc) goto inst_next; SP = SP - 4; *:4 SP = inst_next; __m68k_trapv(); }
 :trap^cc^".l" const32	is op=5 & cc & op37=31 & op02=3; const32	{ if (!cc) goto inst_next; SP = SP - 4; *:4 SP = inst_next; __m68k_trapv(); }
 :trapv					is opbig=0x4e & op37=14 & op02=6			{ if (!VF) goto inst_next; __m68k_trapv(); }
+
+:lineA "#"^op011			is op=10 & op011			{ vector:2 = op011; __m68k_lineA(vector); }
+:lineF "#"^op011			is op=15 & op011			{ vector:2 = op011; __m68k_lineF(vector); }
 
 :tst.b eab			is (opbig=0x4a & op67=0)... & eab				{ logflags(); resflags(eab); }
 :tst.w eaw			is (opbig=0x4a & op67=1)... & eaw				{ logflags(); resflags(eaw); }
