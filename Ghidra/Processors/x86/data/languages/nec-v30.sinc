@@ -1,0 +1,19 @@
+:CLR1 spec_rm8, imm8      is $(LONGMODE_OFF) & vexMode=0 & byte=0x0F; byte=0x1A; spec_rm8; imm8 {
+    local tmp =  spec_rm8 & ~(1 << (imm8 & 15));
+    spec_rm8 = tmp;
+}
+
+:CLR1 spec_rm16, imm8      is $(LONGMODE_OFF) & vexMode=0 & byte=0x0F; byte=0x1B; spec_rm16; imm8 {
+    local tmp =  spec_rm16 & ~(1 << (imm8 & 15));
+    spec_rm16 = tmp;
+}
+
+:SET1 spec_rm8, imm8      is $(LONGMODE_OFF) & vexMode=0 & byte=0x0F; byte=0x1C; spec_rm8; imm8 {
+    local tmp =  spec_rm8 | (1 << (imm8 & 15));
+    spec_rm8 = tmp;
+}
+
+:SET1 spec_rm16, imm8      is $(LONGMODE_OFF) & vexMode=0 & byte=0x0F; byte=0x1D; spec_rm16; imm8 {
+    local tmp =  spec_rm16 | (1 << (imm8 & 15));
+    spec_rm16 = tmp;
+}

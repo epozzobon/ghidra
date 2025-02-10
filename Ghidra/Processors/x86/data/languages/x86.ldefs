@@ -69,6 +69,20 @@
   <language processor="x86"
             endian="little"
             size="16"
+            variant="NEC V30"
+            version="0.1"
+            slafile="nec-v30.sla"
+            processorspec="x86-16-real.pspec"
+            manualindexfile="../manuals/x86.idx"
+            id="NECV30:LE:16:Real Mode">
+    <description>NEC V30</description>
+    <compiler name="default" spec="x86-16.cspec" id="default"/>
+    <external_name tool="gnu" name="i8086"/>
+    <external_name tool="gdis.disassembler.options.file" name="x86-16.gdis"/>
+  </language>
+  <language processor="x86"
+            endian="little"
+            size="16"
             variant="Protected Mode"
             version="4.2"
             slafile="x86.sla"
