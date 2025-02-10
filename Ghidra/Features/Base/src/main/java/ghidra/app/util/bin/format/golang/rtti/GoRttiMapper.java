@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -58,27 +58,31 @@ import ghidra.util.task.UnknownProgressWrappingTaskMonitor;
  * 	<li>Find the GoBuildInfo struct.  This struct is the easiest to locate, even when the binary
  * 	is stripped.  This gives us the go pointerSize (probably same as ghidra pointer size) and the
  * 	goVersion.  This struct does not rely on StructureMapping, allowing its use before a
- * 	DataTypeMapper is created.
- * 	<li>Create DataTypeMapper
- * 	<li>Find the runtime.firstmoduledata structure.
- * 		<ul>
- *			<li>If there are symbols, just use the symbol or named memory block.
- *			<li>If stripped:
+ * 	DataTypeMapper is created.</li>
+ * 	<li>Create DataTypeMapper</li>
+ * 	<li>Find the runtime.firstmoduledata structure.</li>
+ * 	<li>
+ *     <ul>
+ *			<li>If there are symbols, just use the symbol or named memory block.</li>
+ *			<li>If stripped:</li>
+ *			<li>
  *				<ul>
  * 					<li>Find the pclntab.  This has a magic signature, a pointerSize, and references
- * 					to a couple of tables that are also referenced in the moduledata structure.
+ * 					to a couple of tables that are also referenced in the moduledata structure.</li>
  * 					<li>Search memory for a pointer to the pclntab struct.  This should be the first
  * 					field of the moduledata structure.  The values that are duplicated between the
- * 					two structures can be compared to ensure validity.
+ * 					two structures can be compared to ensure validity.</li>
  * 					<li>Different binary formats (Elf vs PE) will determine which memory blocks to
- * 					search.
- * 				</ul>  
- * 		</ul>
+ * 					search.</li>
+ * 				</ul>
+ * 			</li>  
+ * 	   </ul>
+ *  </li>
  * </ul>
  */
 public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContext {
 	public static final GoVer SUPPORTED_MIN_VER = new GoVer(1, 15);
-	public static final GoVer SUPPORTED_MAX_VER = new GoVer(1, 22);
+	public static final GoVer SUPPORTED_MAX_VER = new GoVer(1, 23);
 
 	private static final List<String> SYMBOL_SEARCH_PREFIXES = List.of("", "_" /* macho symbols */);
 	private static final List<String> SECTION_PREFIXES =
@@ -1022,7 +1026,6 @@ public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContex
 
 	/**
 	 * Returns a function definition for a method that is attached to a golang type.
-	 * <p>
 	 * 
 	 * @param methodName name of method
 	 * @param methodType golang function def type
@@ -1157,6 +1160,13 @@ public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContex
 
 				GoType type = it.next();
 				type.discoverGoTypes(discoveredTypes);
+			}
+			for (GoItab itab : module.getItabs()) {
+				upwtm.checkCancelled();
+				upwtm.setProgress(discoveredTypes.size());
+
+				itab.getInterfaceType().discoverGoTypes(discoveredTypes);
+				itab.getType().discoverGoTypes(discoveredTypes);
 			}
 		}
 
@@ -1328,7 +1338,6 @@ public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContex
 	/**
 	 * Returns the {@link GoName} corresponding to an offset that is relative to the controlling
 	 * GoModuledata's typesOffset.
-	 * <p>
 	 * 
 	 * @param ptrInModule the address of the structure that contains the offset that needs to be
 	 * calculated.  The containing-structure's address is important because it indicates which
@@ -1523,7 +1532,7 @@ public class GoRttiMapper extends DataTypeMapper implements DataTypeMapperContex
 		/**
 		 * Returns true if the specified function should be included in the bootstrap function defs
 		 * that are written to the golang_NNNN.gdt archive.
-		 * <p>
+		 * 
 		 * @return true if function should be included in golang.gdt bootstrap file
 		 */
 		public boolean isBootstrapFunction() {

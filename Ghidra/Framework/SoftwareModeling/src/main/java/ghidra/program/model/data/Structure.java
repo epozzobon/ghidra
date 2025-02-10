@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -195,7 +195,6 @@ public interface Structure extends Composite {
 	 * Zero length bitfields may be inserted although they have no real affect when packing disabled. 
 	 * Only the resulting byte offset within the structure is of significance in
 	 * determining its ordinal placement.
-	 * <p>
 	 * 
 	 * @param byteOffset the first byte offset within this structure which corresponds to the first
 	 *            byte of the specified storage unit identified by its byteWidth.
@@ -430,13 +429,22 @@ public interface Structure extends Composite {
 			String comment) throws IllegalArgumentException;
 
 	/**
-	 * Increases the size of the structure by the specified amount by adding undefined filler at the
+	 * Increases the size of the structure by the specified positive amount by adding undefined filler at the
 	 * end of the structure.  NOTE: This method only has an affect on non-packed structures.
 	 * 
 	 * @param amount the amount by which to grow the structure.
-	 * @throws IllegalArgumentException if amount &lt; 1
+	 * @throws IllegalArgumentException if amount &lt; 0
 	 */
 	public void growStructure(int amount);
+	
+	/**
+	 * Set the size of the structure to the specified byte-length.  If the length is shortened defined
+	 * components will be cleared and removed as required.
+	 * NOTE: This method only has an affect on non-packed structures.
+	 * @param length new structure length
+	 * @throws IllegalArgumentException if length &lt; 0
+	 */
+	public void setLength(int length);
 
 	/**
 	 * <code>BitOffsetComparator</code> provides ability to compare an normalized bit offset (see

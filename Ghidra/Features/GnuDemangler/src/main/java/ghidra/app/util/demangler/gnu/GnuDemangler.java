@@ -66,19 +66,21 @@ public class GnuDemangler implements Demangler {
 	}
 
 	@Override
-	@Deprecated(since = "9.2", forRemoval = true)
-	public DemangledObject demangle(String mangled, boolean demangleOnlyKnownPatterns)
+	public DemangledObject demangle(MangledContext mangledContext)
 			throws DemangledException {
-		GnuDemanglerOptions options = new GnuDemanglerOptions();
-		options.setDemangleOnlyKnownPatterns(demangleOnlyKnownPatterns);
-		return demangle(mangled, options);
+		DemangledObject demangled = demangleInternal(mangledContext);
+		if (demangled != null) {
+			demangled.setMangledContext(mangledContext);
+		}
+		return demangled;
 	}
 
-	@Override
-	public DemangledObject demangle(String mangled, DemanglerOptions demanglerOtions)
+	private DemangledObject demangleInternal(MangledContext mangledContext)
 			throws DemangledException {
 
-		GnuDemanglerOptions options = getGnuOptions(demanglerOtions);
+		DemanglerOptions demanglerOptions = mangledContext.getOptions();
+		String mangled = mangledContext.getMangled();
+		GnuDemanglerOptions options = getGnuOptions(demanglerOptions);
 		if (skip(mangled, options)) {
 			return null;
 		}
@@ -115,9 +117,8 @@ public class GnuDemangler implements Demangler {
 				throw new DemangledException(true);
 			}
 
-			boolean onlyKnownPatterns = options.demangleOnlyKnownPatterns();
 			DemangledObject demangledObject =
-				parse(originalMangled, process, demangled, onlyKnownPatterns);
+				parse(originalMangled, process, demangled, options);
 			if (demangledObject == null) {
 				return demangledObject;
 			}
@@ -226,14 +227,16 @@ public class GnuDemangler implements Demangler {
 	}
 
 	private DemangledObject parse(String mangled, GnuDemanglerNativeProcess process,
-			String demangled, boolean demangleOnlyKnownPatterns) {
+			String demangled, GnuDemanglerOptions options) {
 
-		if (demangleOnlyKnownPatterns && !isKnownMangledString(mangled, demangled)) {
+		boolean onlyKnownPatterns = options.demangleOnlyKnownPatterns();
+		if (onlyKnownPatterns && !isKnownMangledString(mangled, demangled)) {
 			return null;
 		}
 
+		boolean replaceStdTypedefs = options.shouldUseStandardReplacements();
 		GnuDemanglerParser parser = new GnuDemanglerParser();
-		DemangledObject demangledObject = parser.parse(mangled, demangled);
+		DemangledObject demangledObject = parser.parse(mangled, demangled, replaceStdTypedefs);
 		return demangledObject;
 	}
 

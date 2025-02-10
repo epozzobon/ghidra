@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -62,7 +62,7 @@ public class ImportBatchTask extends Task {
 	/**
 	 * Start a Batch Import session with an already populated {@link BatchInfo}
 	 * instance.
-	 * <p>
+	 * 
 	 * @param batchInfo {@link BatchInfo} state object
 	 * @param destFolder {@link DomainFolder} where to place imported files
 	 * @param programManager {@link ProgramManager} to use when opening newly imported files, null ok
@@ -137,7 +137,7 @@ public class ImportBatchTask extends Task {
 			LoadSpec loadSpec = batchLoadConfig.getLoadSpec(selectedBatchGroupLoadSpec);
 			if (loadSpec == null) {
 				Msg.error(this,
-					"Failed to get load spec from application that matches choosen batch load spec " +
+					"Failed to get load spec from application that matches chosen batch load spec " +
 						selectedBatchGroupLoadSpec);
 				return;
 			}

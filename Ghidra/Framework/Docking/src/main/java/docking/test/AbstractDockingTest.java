@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -582,7 +582,7 @@ public abstract class AbstractDockingTest extends AbstractGuiTest {
 	 * Waits for the first window of the given class.
 	 *
 	 * @param ghidraClass The class of the dialog the user desires
-	 * @return The first occurrence of a dialog that extends the given <code>ghirdraClass</code>
+	 * @return The first occurrence of a dialog that extends the given <code>ghidraClass</code>
 	 * @see #waitForDialogComponent(Window, Class, int)
 	 */
 	public static <T extends DialogComponentProvider> T waitForDialogComponent(
@@ -598,7 +598,7 @@ public abstract class AbstractDockingTest extends AbstractGuiTest {
 	 * @param clazz The class of the dialog the user desires
 	 * @param timeoutMS The max amount of time in milliseconds to wait for the requested dialog
 	 *        to appear.
-	 * @return The first occurrence of a dialog that extends the given <code>ghirdraClass</code>
+	 * @return The first occurrence of a dialog that extends the given <code>ghidraClass</code>
 	 * @deprecated Instead call one of the methods that does not take a timeout
 	 *             (we are standardizing timeouts).  The timeouts passed to this method will
 	 *             be ignored in favor of the standard value.
@@ -986,6 +986,43 @@ public abstract class AbstractDockingTest extends AbstractGuiTest {
 
 	/**
 	 * Finds the toggle button with the given name inside of the given container and then
+	 * gets the selected state of the button.
+	 * <p>
+	 * Note: this works for any instanceof {@link JToggleButton}, such as:
+	 * <ul>
+	 * 	<li>{@link JCheckBox}</li>
+	 *  <li>{@link JRadioButton}</li>
+	 * </ul>
+	 * as well as {@link EmptyBorderToggleButton}s.
+	 *
+	 * @param container a container that has the desired button as a descendant
+	 * @param buttonName the name of the button (you must set this on the button when it is
+	 *                   constructed; if there is no button with the given name found, then this
+	 *                   method will search for a button with the given text
+	 * @return true if the button is selected
+	 */
+	public static boolean isToggleButttonSelected(Container container, String buttonName) {
+		AbstractButton button = findAbstractButtonByName(container, buttonName);
+		if (button == null) {
+			button = findAbstractButtonByText(container, buttonName);
+		}
+		if (button == null) {
+			throw new AssertionError("Could not find button by name or text '" + buttonName + "'");
+		}
+
+		boolean isToggle =
+			(button instanceof JToggleButton) || (button instanceof EmptyBorderToggleButton);
+		if (!isToggle) {
+			throw new AssertionError(
+				"Found a button, but it is not a toggle button.  Text: '" + buttonName + "'");
+		}
+
+		AbstractButton finalButton = button;
+		return runSwing(() -> finalButton.isSelected());
+	}
+
+	/**
+	 * Finds the toggle button with the given name inside of the given container and then
 	 * ensures that the selected state of the button matches <code>selected</code>.
 	 * <p>
 	 * Note: this works for any instanceof {@link JToggleButton}, such as:
@@ -1037,7 +1074,7 @@ public abstract class AbstractDockingTest extends AbstractGuiTest {
 	 * @param selected true to toggle the button to selected; false for de-selected
 	 */
 	public static void setToggleButtonSelected(AbstractButton button, boolean selected) {
-		boolean isSelected = button.isSelected();
+		boolean isSelected = runSwing(() -> button.isSelected());
 		if (isSelected != selected) {
 			pressButton(button);
 		}
@@ -1503,7 +1540,7 @@ public abstract class AbstractDockingTest extends AbstractGuiTest {
 		triggerKey(destination, modifiers, keyCode, keyChar);
 	}
 
-	public static void triggerEscapeKey(Component c) {
+	public static void triggerEscape(Component c) {
 		// text components will not perform built-in actions if they are not focused
 		if (c instanceof JTextComponent) {
 			triggerFocusGained(c);
@@ -1511,7 +1548,7 @@ public abstract class AbstractDockingTest extends AbstractGuiTest {
 		triggerText(c, "\033");
 	}
 
-	public static void triggerBackspaceKey(Component c) {
+	public static void triggerBackspace(Component c) {
 		triggerText(c, "\010");
 	}
 

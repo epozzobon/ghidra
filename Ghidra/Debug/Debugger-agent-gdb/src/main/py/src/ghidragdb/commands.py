@@ -1,17 +1,17 @@
 ## ###
-#  IP: GHIDRA
-# 
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#  
-#       http://www.apache.org/licenses/LICENSE-2.0
-#  
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# IP: GHIDRA
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 ##
 from contextlib import contextmanager
 import inspect
@@ -594,15 +594,18 @@ def putreg(frame, reg_descs):
     cobj = STATE.trace.create_object(space)
     cobj.insert()
     mapper = STATE.trace.register_mapper
+    keys = []
     values = []
     # NB: This command will fail if the process is running
-    endian = arch.get_endian()
     for desc in reg_descs:
         v = frame.read_register(desc.name)
         rv = mapper.map_value(inf, desc.name, v)
         values.append(rv)
-        value = hex(int.from_bytes(rv.value, endian))
+        # Mapper has converted to big endian. Display value should interpret it as such.
+        value = hex(int.from_bytes(rv.value, byteorder='big'))
         cobj.set_value(desc.name, str(value))
+        keys.append(desc.name)
+    cobj.retain_values(keys)
     # TODO: Memorize registers that failed for this arch, and omit later.
     missing = STATE.trace.put_registers(space, values)
     return {'missing': missing}
@@ -1200,12 +1203,13 @@ def ghidra_trace_put_environment(*, is_mi, **kwargs):
         put_environment()
 
 
-def put_regions():
+def put_regions(regions=None):
     inf = gdb.selected_inferior()
-    try:
-        regions = util.REGION_INFO_READER.get_regions()
-    except Exception:
-        regions = []
+    if regions is None:
+        try:
+            regions = util.REGION_INFO_READER.get_regions()
+        except Exception:
+            regions = []
     if len(regions) == 0 and gdb.selected_thread() is not None:
         regions = [util.REGION_INFO_READER.full_mem()]
     mapper = STATE.trace.memory_mapper
@@ -1229,6 +1233,7 @@ def put_regions():
         regobj.insert()
     STATE.trace.proxy_object_path(
         MEMORY_PATTERN.format(infnum=inf.num)).retain_values(keys)
+    return regions
 
 
 @cmd('ghidra trace put-regions', '-ghidra-trace-put-regions', gdb.COMMAND_DATA,
@@ -1425,6 +1430,8 @@ def put_frames():
         f = f.older()
         level += 1
         fobj.insert()
+        robj = STATE.trace.create_object(fpath+".Registers")
+        robj.insert()
     STATE.trace.proxy_object_path(STACK_PATTERN.format(
         infnum=inf.num, tnum=t.num)).retain_values(keys)
 

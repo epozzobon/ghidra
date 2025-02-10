@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -60,8 +60,6 @@ import util.HistoryList;
 public class DataTypesProvider extends ComponentProviderAdapter {
 
 	private static final String TITLE = "Data Type Manager";
-	private static final String POINTER_FILTER_STATE = "PointerFilterState";
-	private static final String ARRAY_FILTER_STATE = "ArrayFilterState";
 	private static final String CONFLICT_RESOLUTION_MODE = "ConflictResolutionMode";
 	private static final String PREVIEW_WINDOW_STATE = "PreviewWindowState";
 	private static final String INCLUDE_DATA_MEMBERS_IN_SEARCH = "DataMembersInSearchState";
@@ -73,7 +71,6 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 	private int defaultDividerSize;
 	private JScrollPane previewScrollPane;
 	private JTextPane previewPane;
-
 	private GTreeNode lastPreviewNode;
 	private SwingUpdateManager previewUpdateManager =
 		new SwingUpdateManager(100, () -> updatePreviewPane());
@@ -90,13 +87,13 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 	private MultiActionDockingAction previousAction;
 
 	private ConflictHandlerModesAction conflictHandlerModesAction;
-	private ToggleDockingAction filterArraysAction;
-	private ToggleDockingAction filterPointersAction;
+	private DtFilterAction filterAction;
 	private ToggleDockingAction previewWindowAction;
 	private ToggleDockingAction includeDataMembersInSearchAction;
 	private FilterOnNameOnlyAction filterOnNameOnlyAction;
 	private boolean includeDataMembersInFilter;
 	private boolean filterOnNameOnly;
+	private DtFilterState filterState = new DtFilterState();
 
 	public DataTypesProvider(DataTypeManagerPlugin plugin, String providerName) {
 		this(plugin, providerName, false);
@@ -165,12 +162,6 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 		addLocalAction(new DeleteArchiveAction(plugin));
 		addLocalAction(new RenameAction(plugin));
 		addLocalAction(new EditAction(plugin));
-		// NOTE: it make very little sense to blindly enable packing
-//		  addLocalAction(new PackDataTypeAction(plugin));
-//        addLocalAction( new PackDataTypeAction( plugin ));
-//        addLocalAction( new PackSizeDataTypeAction( plugin ));
-//		  addLocalAction(new PackAllDataTypesAction(plugin));
-//        addLocalAction( new DefineDataTypeAlignmentAction( plugin ));
 		addLocalAction(new CreateEnumFromSelectionAction(plugin));
 
 		// File group
@@ -223,8 +214,8 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 		addLocalAction(previousAction);
 		nextAction = new NextPreviousDataTypeAction(this, plugin.getName(), true);
 		addLocalAction(nextAction);
-		addLocalAction(getFilterArraysAction());
-		addLocalAction(getFilterPointersAction());
+		filterAction = new DtFilterAction(plugin);
+		addLocalAction(filterAction);
 		addLocalAction(getConflictHandlerModesAction());
 
 		// toolbar menu
@@ -306,30 +297,13 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 		return archiveGTree.isFiltered();
 	}
 
-	public boolean isFilteringPointers() {
-		return filterPointersAction.isSelected();
+	public DtFilterState getFilterState() {
+		return filterState;
 	}
 
-	public boolean isFilteringArrays() {
-		return filterArraysAction.isSelected();
-	}
-
-	private ToggleDockingAction getFilterPointersAction() {
-		if (filterPointersAction == null) {
-			filterPointersAction = new FilterPointersAction(plugin);
-			archiveGTree.enablePointerFilter(filterPointersAction.isSelected());
-		}
-
-		return filterPointersAction;
-	}
-
-	private ToggleDockingAction getFilterArraysAction() {
-		if (filterArraysAction == null) {
-			filterArraysAction = new FilterArraysAction(plugin);
-			archiveGTree.enableArrayFilter(filterArraysAction.isSelected());
-		}
-
-		return filterArraysAction;
+	public void setFilterState(DtFilterState filterState) {
+		this.filterState = filterState;
+		archiveGTree.setFilterState(filterState);
 	}
 
 	private ConflictHandlerModesAction getConflictHandlerModesAction() {
@@ -651,8 +625,7 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 	}
 
 	void restore(SaveState saveState) {
-		boolean filterPointers = saveState.getBoolean(POINTER_FILTER_STATE, true);
-		boolean filterArrays = saveState.getBoolean(ARRAY_FILTER_STATE, true);
+
 		ConflictResolutionPolicy conflictMode;
 		try {
 			conflictMode =
@@ -662,12 +635,12 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 		catch (IllegalArgumentException e) {
 			conflictMode = ConflictResolutionPolicy.RENAME_AND_ADD;
 		}
-		getFilterPointersAction().setSelected(filterPointers);
-		getFilterArraysAction().setSelected(filterArrays);
+
 		getConflictHandlerModesAction().setCurrentActionStateByUserData(conflictMode);
 
-		archiveGTree.enableArrayFilter(filterArrays);
-		archiveGTree.enablePointerFilter(filterPointers);
+		filterState = new DtFilterState();
+		filterState.restore(saveState);
+		archiveGTree.setFilterState(filterState);
 
 		boolean previewWindowVisible = saveState.getBoolean(PREVIEW_WINDOW_STATE, false);
 		getPreviewWindowAction().setSelected(previewWindowVisible);
@@ -677,8 +650,9 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 	}
 
 	void save(SaveState saveState) {
-		saveState.putBoolean(POINTER_FILTER_STATE, getFilterPointersAction().isSelected());
-		saveState.putBoolean(ARRAY_FILTER_STATE, getFilterArraysAction().isSelected());
+
+		filterState.save(saveState);
+
 		saveState.putString(CONFLICT_RESOLUTION_MODE,
 			getConflictHandlerModesAction().getCurrentUserData().toString());
 		saveState.putBoolean(PREVIEW_WINDOW_STATE, getPreviewWindowAction().isSelected());
@@ -846,14 +820,6 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 		filterOnNameOnlyAction.setSelected(newValue);
 	}
 
-	public void setFilteringArrays(boolean b) {
-		archiveGTree.enableArrayFilter(b);
-	}
-
-	public void setFilteringPointers(boolean b) {
-		archiveGTree.enablePointerFilter(b);
-	}
-
 	public boolean isIncludeDataMembersInSearch() {
 		return includeDataMembersInFilter;
 	}
@@ -886,7 +852,9 @@ public class DataTypesProvider extends ComponentProviderAdapter {
 		}
 
 		GTreeNode node = (GTreeNode) path.getLastPathComponent();
-		previewPane.setText(node.getToolTip());
+		if (node instanceof DataTypeNode dtNode) {
+			showDataTypePreview(dtNode);
+		}
 	}
 
 	String getPreviewText() {

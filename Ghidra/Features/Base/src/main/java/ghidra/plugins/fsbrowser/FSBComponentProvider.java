@@ -4,9 +4,9 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,6 +26,8 @@ import java.util.List;
 import javax.swing.*;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
+
+import org.apache.commons.io.FilenameUtils;
 
 import docking.*;
 import docking.action.DockingAction;
@@ -81,14 +83,14 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 	 * @param fsRef {@link FileSystemRef} to a {@link GFileSystem}.
 	 */
 	public FSBComponentProvider(FileSystemBrowserPlugin plugin, FileSystemRef fsRef) {
-		super(plugin.getTool(), fsRef.getFilesystem().getName(), plugin.getName());
+		super(plugin.getTool(), getDescriptiveFSName(fsRef.getFilesystem()), plugin.getName());
 
 		this.plugin = plugin;
 		this.rootNode = new FSBRootNode(fsRef);
 		this.pm = plugin.getTool().getService(ProgramManager.class);
 
 		setTransient();
-		setIcon(FSBIcons.PHOTO);
+		setIcon(getFSIcon(fsRef.getFilesystem(), true, fsbIcons));
 
 		initTree();
 		fsRef.getFilesystem().getRefManager().addListener(this);
@@ -145,8 +147,8 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 				super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row,
 					hasFocus);
 
-				if (value instanceof FSBRootNode fsRootNode) {
-					renderFS(fsRootNode, selected);
+				if (value instanceof FSBRootNode) {
+					// do nothing
 				}
 				else if (value instanceof FSBDirNode) {
 					// do nothing special, but exclude FSBFileNode
@@ -156,16 +158,6 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 				}
 
 				return this;
-			}
-
-			private void renderFS(FSBRootNode node, boolean selected) {
-				FileSystemRef nodeFSRef = node.getFSRef();
-				if (nodeFSRef == null || nodeFSRef.getFilesystem() == null) {
-					return;
-				}
-				Icon image = fsbIcons.getIcon(node.getContainerName(),
-					List.of(FSBIcons.FILESYSTEM_OVERLAY_ICON));
-				setIcon(image);
 			}
 
 			private void renderFile(FSBFileNode node, boolean selected) {
@@ -192,9 +184,18 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 					overlays.add(FSBIcons.MISSING_PASSWORD_OVERLAY_ICON);
 				}
 
+				String ext = node.getFilenameExtOverride();
+				if (ext != null && !ext.isEmpty()) {
+					if (ext.startsWith(".")) {
+						Msg.error(this,
+							"Extension override '" + ext + "' should not begin with a dot");
+					} else {
+						filename += "." + ext;
+					}
+				}
+
 				Icon icon = fsbIcons.getIcon(filename, overlays);
 				setIcon(icon);
-
 			}
 		});
 	}
@@ -266,7 +267,10 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 	public void setProject(Project project) {
 		gTree.runTask(monitor -> {
 			projectIndex.setProject(project, monitor);
-			Swing.runLater(() -> gTree.repaint()); // icons might need repainting after new info is available
+			Swing.runLater(() -> {
+				contextChanged();
+				gTree.repaint();
+			}); // icons might need repainting after new info is available
 		});
 	}
 
@@ -421,6 +425,9 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 				if (nested) {
 					FSBFileNode modelFileNode =
 						(FSBFileNode) gTree.getModelNodeForPath(node.getTreePath());
+					if (modelFileNode == null) {
+						return;
+					}
 
 					FSBRootNode nestedRootNode = new FSBRootNode(ref, modelFileNode);
 
@@ -535,9 +542,13 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 						Swing.runLater(() -> openWithTarget.open(List.of(df)));
 						return;
 					}
-					ImporterUtilities.showImportSingleFileDialog(fullFsrl, null,
-						fileNode.getFormattedTreePath(), plugin.getTool(), openWithTarget.getPm(),
-						monitor);
+
+					String suggestedPath =
+						FilenameUtils.getFullPathNoEndSeparator(fileNode.getFormattedTreePath())
+								.replaceAll(":/", "/");
+
+					ImporterUtilities.showImportSingleFileDialog(fullFsrl, null, suggestedPath,
+						plugin.getTool(), openWithTarget.getPm(), monitor);
 				}
 				catch (IOException | CancelledException e) {
 					// fall thru
@@ -573,4 +584,20 @@ public class FSBComponentProvider extends ComponentProviderAdapter
 
 	}
 
+	static String getDescriptiveFSName(GFileSystem fs) {
+		return fs instanceof LocalFileSystem ? "My Computer" : fs.getName();
+	}
+
+	static Icon getFSIcon(GFileSystem fs, boolean isRootNode, FSBIcons fsbIcons) {
+		List<Icon> overlays = !isRootNode ? List.of(FSBIcons.FILESYSTEM_OVERLAY_ICON) : List.of();
+		FSRL container = fs.getFSRL().getContainer();
+		String containerName = container != null ? container.getName() : "/";
+		Icon image = fs instanceof LocalFileSystem || fs instanceof LocalFileSystemSub
+				? FSBIcons.MY_COMPUTER
+				: fsbIcons.getIcon(containerName, overlays);
+		if (image == FSBIcons.DEFAULT_ICON) {
+			image = FSBIcons.PHOTO;
+		}
+		return image;
+	}
 }

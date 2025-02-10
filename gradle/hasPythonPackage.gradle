@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,7 +25,7 @@ eclipse.project {
 
 ext.findPyDep = { name ->
     File inDeps = file("${DEPS_DIR}/${project.name}/${name}")
-    File inRepo = file("${BIN_REPO}/${getGhidraRelativePath(project)}/${name}")
+    File inRepo = file("${BIN_REPO}/ExternalPyWheels/${name}")
     if (inDeps.exists()) {
         return inDeps
     }
@@ -47,14 +47,23 @@ task buildPyPackage {
 	inputs.files(assemblePyPackage)
 	outputs.dir(dist)
 
+	def debuggerRmiTraceProject = project(":Debugger-rmi-trace")
+
 	doLast {
-		File setuptools = project(":Debugger-rmi-trace").findPyDep(".")
-		exec {
-			workingDir { "build/pypkg" }
-			commandLine	rootProject.PYTHON3, "-m", "pip"
-			args "wheel", "-w", "dist/", "--no-index", "--no-deps"
-			args "-f", setuptools
-			args "."
+		if (rootProject.PYTHON3 == null) {
+			throw new GradleException("A supported version of Python [${PYTHON_SUPPORTED}] was not found!")
+		}
+	
+		File setuptools = debuggerRmiTraceProject.findPyDep(".")
+		
+		def exec = providers.exec {
+			workingDir { file("build/pypkg") }
+			ignoreExitValue = true
+			commandLine rootProject.PYTHON3
+			args "-m", "pip", "wheel", "-w", "dist/", "--no-index", "--no-deps", "-f", setuptools, "."
+		}
+		if (exec.result.get().exitValue != 0) {
+			throw new GradleException(exec.standardError.asText.get().strip())
 		}
 	}
 }
@@ -70,13 +79,21 @@ rootProject.assembleDistribution {
 		exclude '**/*.pyc'
 		exclude '**/*.pyo'
 		exclude '**/__pycache__/**'
-		exclude 'dist/*.tar.gz'
+		exclude '**/.pytest_cache'
+		exclude '**/*.egg-info'
+		exclude 'build'
 		into { zipPath + "/pypkg" }
 	}
 }
 
 ext.distributePyDep = { name ->
+	Set<File> wheelFiles = PYTHON_DEPS.get(project)
+	if (wheelFiles == null) {
+		wheelFiles = new HashSet<>()
+		PYTHON_DEPS.put(project, wheelFiles)
+	}
     File dep = findPyDep(name)
+    wheelFiles.add(dep)
     def zipPath = getZipPath(project) 
     rootProject.assembleDistribution {
         into ("${zipPath}/pypkg/dist") {
